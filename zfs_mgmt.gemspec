@@ -7,9 +7,9 @@ Gem::Specification.new do |spec|
   spec.name          = "zfs_mgmt"
   spec.version       = ZfsMgmt::VERSION
   spec.authors       = ["Aran Cox"]
-  spec.email         = ["aran-cox@uiowa.edu"]
+  spec.email         = ["arancox@gmail.com"]
 
-  spec.summary       = %q{TODO: Write a short summary, because RubyGems requires one.}
+  spec.summary       = %q{Misc. helpers regarding snapshots and send/recv.}
   spec.description   = %q{TODO: Write a longer description or delete this line.}
   spec.homepage      = "TODO: Put your gem's website or public repo URL here."
 
