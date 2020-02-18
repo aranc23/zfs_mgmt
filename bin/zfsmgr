@@ -1,0 +1,11 @@
+require "thor"
+require "zfs_mgmt"
+
+class ZfsMgr < Thor
+  desc "readsnaps", "actually just run readsnaps"
+  def readsnaps()
+    print ZfsMgmt.readsnaps().join('')
+  end
+end
+
+ZfsMgr.start(ARGV)
