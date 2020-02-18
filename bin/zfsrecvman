@@ -1,0 +1,154 @@
+#! /bin/bash
+
+export PATH=$PATH:/sbin
+
+FILTER='.'
+SENDER='beast'
+REMOTE='blob'
+RECVER='blob'
+USER='root'
+DEST="blob"/$(hostname -s)
+SEND='send -R'
+RECV='recv -u -e -F'
+FLOCK='/usr/bin/flock -w 60 -n 9'
+PORT='1337'
+MBUFFER='-s 128k -m 1G -4'
+USE_MBUFFER='no'
+LOCK_DIR='/var/run/'$(basename $0)
+TEST=0
+VERB=0
+
+test -f $HOME/.keychain/$HOSTNAME-sh && . $HOME/.keychain/$HOSTNAME-sh
+
+. /usr/bin/zfsfuncs
+
+terminal_options
+
+if [[ `hostname -s` == $SENDER ]]; then
+    SENDER_PREF=""
+    RECVER_PREF="ssh ${USER}@${SENDER}"
+elif [[ `hostname -s` == $RECVER ]]; then
+    SENDER_PREF="ssh ${USER}@${SENDER}"
+    RECVER_PREF=""
+else
+    $ulog "can only be run on ${SENDER} or ${RECVER}"
+    exit -1
+fi
+
+while getopts ":p:f:L:mnv" opt; do
+    case $opt in
+        p)
+            PORT=$OPTARG
+            ;;
+        f)
+            FILTER=$OPTARG
+            ;;
+        L)
+            PV_OPTS="${PV_OPTS} -L ${OPTARG}"
+            ;;
+        m)
+            USE_MBUFFER='yes'
+            ;;
+        n)
+            RECV="${RECV} -n"
+            TEST=1
+            VERB=1
+            PV_OPTS='-q' # make pv quiet
+            MBUFFER_SEND_OPTS='-q' # enable send side -q, no terminal
+            ;;
+        v)
+            VERB=1
+            ;;
+    esac
+done
+
+if [[ $VERB == 1 ]]; then
+    echo $RECV | grep -q -- -v || RECV="${RECV} -v"
+fi
+
+for zpool in $( zpool list -H -o name | egrep "$FILTER" | sort ); do
+    target="${DEST}/${zpool}"
+    target_dir=$( dirname $target )
+    # recv_last is the last snapshot on the recv side of this zfs
+    if ! ssh "${USER}@${REMOTE}" zfs get written $target >/dev/null 2>/dev/null; then
+        $ulog sending initial snapshot of $zpool to $target_dir on $REMOTE
+        snap=$( zfs list -t snapshot -o name -s creation -d 1 -H $zpool | grep @zfssnapman- | tail -1 )
+        result='-1'
+        zfssendrecv -z $zpool \
+            -s $snap \
+            -d $target_dir \
+            -h # create hold
+        result=$?
+        if [[ $TEST == 0 ]]; then
+            echo "${zpool}:${REMOTE}:${snap}:${result}" >> ~/.zfssendrecv.log
+            if [[ $result != 0 ]]; then
+                zfs release -r zfsrecvman $snap || $ulog "unable to remove hold on our source snapshot: ${snap}"
+            fi
+        fi
+    fi
+
+    # last known good snapshot sent
+    pattern="^${zpool}:${REMOTE}:.+:0$"
+    if ! egrep -q "${pattern}" ~/.zfssendrecv.log; then
+        $ulog "no known good snapshot logged for ${zpool} on ${REMOTE}, unable to continue"
+        continue;
+    fi
+    last_snap=$( egrep "${pattern}" ~/.zfssendrecv.log | tail -1 | cut -d: -f 3)
+    
+    remote_snaps=$( mktemp )
+    ssh "${USER}@${REMOTE}" zfs list -t snapshot -o name -s creation -d 1 -H $target > $remote_snaps
+    if [[ $? != 0 ]]; then 
+        $ulog "unable to retrieve list of remote snapshots for ${zpool} on ${REMOTE}"
+        continue;
+    fi
+
+    if ! egrep -q "^${target_dir}/${last_snap}" $remote_snaps; then
+        $ulog "${last_snap} does not exist on ${REMOTE}, you must destroy the filesystem: ${target}"
+        continue;
+    fi
+    if ! tail -1 $remote_snaps | egrep -q "^${target_dir}/${last_snap}"; then
+        $ulog "${last_snap} is not the most recent snapshot on ${REMOTE}, rollback will occur on ${target}"
+    fi
+    
+    rm -f $remote_snaps
+    # grab the most recent local recursive snapshot
+    current=$( zfs list -t snapshot -o name -s creation -d 1 -H $zpool | grep @zfssnapman- | tail -1 )
+    if [[ "${last_snap}" == "${current}" ]]; then
+        $ulog "${zpool} is in sync on source and destination (${target})"
+        continue
+    fi
+    $ulog sending $last_snap through $current to $target
+    result='-1'
+    zfssendrecv -z $zpool \
+        -I $last_snap \
+        -s $current \
+        -d $target_dir \
+        -h
+    result=$?
+    if [[ $TEST == 1 ]]; then
+        continue
+    fi
+    echo "${zpool}:${REMOTE}:${current}:${result}" >> ~/.zfssendrecv.log
+    if [[ $result == 0 ]]; then
+        $ulog "${zpool} is in sync on source and destination (${target})"
+        zfs get -t filesystem -H -r all $zpool | ssh "${USER}@${REMOTE}" "cat > ~/.zpool-properties-${zpool}" ||
+          $ulog "unable to write zpool properties backup for ${zpool}" 
+        zfs release -r zfsrecvman $last_snap ||
+          $ulog "unable to release old snapshot: ${last_snap}"
+        ssh "${USER}@${REMOTE}" "zfs release -r zfsrecvman ${target_dir}/${last_snap}" ||
+          $ulog "unable to release old snapshot on remote side: ${target_dir}/${last_snap}"
+        ssh "${USER}@${REMOTE}" "zfs hold -r zfsrecvman ${target_dir}/${current}" ||
+          $ulog "unable to hold snapshot on remote side: ${target_dir}/${current}"
+        com=''
+        for zfs in $(ssh "${USER}@${REMOTE}" "zfs list -H -o name -t filesystem -r ${target}" | sort -r ); do
+            for prop in 'canmount=off' 'sharenfs=off' 'sharesmb=off' 'mountpoint=none'; do
+                com="${com}zfs set ${prop} ${zfs};"
+            done
+        done
+        $ulog "fixing zfs properties for ${zpool} (this may take a while)"
+        ssh "${USER}@${REMOTE}" "${com}" 2>&1 | $ulog
+    else
+        zfs release -r zfsrecvman $current || $ulog "unable to release current snapshot: ${current}"
+        $ulog zfs exited with $result while sending $send through $current to $target
+    fi
+done
