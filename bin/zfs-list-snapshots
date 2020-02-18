@@ -1,0 +1,10 @@
+#! /bin/bash -e
+
+timeout=1800
+output=/etc/zfs-list-snapshots.txt
+lock=/etc/zfs-list-snapshots.lock
+tempfile=$(mktemp)
+
+flock -w $timeout $lock /usr/sbin/zfs list -Hprt snapshot -o name,creation,used,written,refer,logicalreferenced,logicalused,zfssnapman:destroy,zfssnapman:snap -s creation > $tempfile
+mv -f $tempfile $output
+chmod 0644 $output

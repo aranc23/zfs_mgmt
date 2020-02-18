@@ -32,7 +32,7 @@ Gem::Specification.new do |spec|
     `git ls-files -z`.split("\x0").reject { |f| f.match(%r{^(test|spec|features)/}) }
   end
   spec.bindir        = "bin"
-  spec.executables   = ['readsnaps','zfssendman','zfssnapman','zfsrecvman']
+  spec.executables   = ['readsnaps','zfssendman','zfssnapman','zfsrecvman','zfs-list-snapshots']
   spec.require_paths = ["lib"]
 
   spec.add_development_dependency "bundler", "~> 1.16"
