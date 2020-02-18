@@ -1,0 +1,114 @@
+#! /bin/bash
+
+export PATH=$PATH:/sbin
+
+FILTER='.'
+REMOTE='a-lnx005'
+USER='root'
+DEST="backup"/$(hostname -s)
+SEND='send'
+RECV='recv -e -F'
+FLOCK='/usr/bin/flock -w 60 -n 9'
+PORT='1337'
+MBUFFER='-s 128k -m 1G -4'
+USE_MBUFFER='no'
+LOCK_DIR='/var/run/'$(basename $0)
+test -d $LOCK_DIR || mkdir $LOCK_DIR
+TEST=0
+VERB=0
+
+test -f $HOME/.keychain/$HOSTNAME-sh && . $HOME/.keychain/$HOSTNAME-sh
+
+. /usr/bin/zfsfuncs
+
+terminal_options
+
+while getopts ":p:f:L:mnv" opt; do
+    case $opt in
+        p)
+            PORT=$OPTARG
+            ;;
+        f)
+            FILTER=$OPTARG
+            ;;
+        L)
+            PV_OPTS="${PV_OPTS} -L ${OPTARG}"
+            ;;
+        m)
+            USE_MBUFFER='yes'
+            ;;
+        n)
+            RECV="${RECV} -n"
+            TEST=1
+            VERB=1
+            PV_OPTS='-q' # make pv quiet
+            MBUFFER_SEND_OPTS='-q' # enable send side -q, no terminal
+            ;;
+        v)
+            VERB=1
+            ;;
+    esac
+done
+
+if [[ $VERB == 1 ]]; then
+    echo $RECV | grep -q -- -v || RECV="${RECV} -v"
+fi
+
+function set_options {
+    local zfs=$1
+    local target=$2
+    local compress=$( zfs get -H -o value compression $zfs )
+    local destroy=$( zfs get -H -o value zfssnapman:destroy $zfs )
+    ssh "${USER}@${REMOTE}" "zfs set readonly=on ${target} ; zfs set compression=${compress} ${target} ; zfs set zfssnapman:destroy=${destroy} ${target}"
+}
+
+# zfs is the filesystem to be sent, including source pool
+for zfs in $( zfs list -H -t filesystem,volume -o name,zfssendman:send | grep true | egrep "${FILTER}" | awk -F\\t '{if($2 == "true") {print $1;}}' | sort ); do
+    # base is the zfs filesystem to send, minus the pool
+    target="${DEST}/${zfs}"
+    target_dir=$( dirname $target )
+    # recv_last is the last snapshot on the recv side of this zfs
+    if ! ssh "${USER}@${REMOTE}" zfs get written $target >/dev/null 2>/dev/null; then
+        $ulog sending initial snapshot of $zfs to $target_dir
+        zfssendrecv -z $zfs \
+            -s $( zfs list -t snapshot -o name -s creation -d 1 -H $zfs | head -1 ) \
+            -d $target_dir
+        if [[ $TEST == 0 ]]; then
+            set_options $zfs $target
+        fi
+        sleep 5
+    fi
+    
+    recv_last=$( ssh "${USER}@${REMOTE}" zfs list -t snapshot -o name -s creation -d 1 -H $target | tail -1 ) || break;
+    if ! echo $recv_last | grep -q "${zfs}@"; then
+        $ulog "no snapshot on distant end, you must destroy the filesystem: $zfs"
+        break;
+    fi
+    # send is the snapshot on the recv side after stripping off the DEST
+    send=$( echo $recv_last|sed "s|$DEST/||" )
+    
+    zfs list -t snapshot -o name -d 1 -H $zfs | grep -q $send
+    if [[ $? == 0 ]]; then
+        # most recent snapshot on the send side
+        current=$( zfs list -t snapshot -o name -s creation -d 1 -H $zfs | tail -1 )
+        if [[ $send == $current ]]; then
+            $ulog "${zfs} is in sync on source and destination (${target})"
+        else
+            $ulog sending $send through $current to $target
+            zfssendrecv -z $zfs \
+                -I $send \
+                -s $current \
+                -d $target_dir
+            if [[ $? == 0 ]]; then
+                $ulog "$zfs is in sync on source and destination"
+                if [[ $TEST == 0 ]]; then
+                    set_options $zfs $target
+                fi
+            else
+                $ulog zfs exited with $? while sending $send through $current to $target
+            fi
+        fi
+    else
+        $ulog "the most recent snapshot ($recv_last) on the recv side does not exist on the send side ($send)"
+    fi
+done

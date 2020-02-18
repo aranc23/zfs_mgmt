@@ -1,0 +1,126 @@
+#-*- mode: sh ; -*-
+
+function zfssendrecv {
+    local OPTIND OPTARG opt
+    local zfs
+    local snap
+    local dest
+    local inc=''
+    local hold=0
+    while getopts "z:s:d:i:I:h" opt; do
+        case $opt in
+            z)
+                zfs=$OPTARG
+                ;;
+            s)
+                snap=$OPTARG
+                ;;
+            d)
+                dest=$OPTARG
+                ;;
+            i)
+                inc="-i ${OPTARG}"
+                ;;
+            I)
+                inc="-I ${OPTARG}"
+                ;;
+            h)
+                hold=1
+                ;;
+        esac
+    done
+    shift $((OPTIND-1))
+    local zfs_normal=$( echo $zfs|sed 's/[\:\|\/\\ ]/_/g' )
+    local lock="${LOCK_DIR}/${zfs_normal}.lock"
+    local zfs_recv_status
+    local zfs_send_status
+    local pipe_status
+    (
+        if ! $FLOCK; then
+            $ulog "unable to lock ${lock}"
+            return -2
+        fi
+        if [[ $TEST == 0 && $hold == 1 ]]; then
+            zfs hold -r zfsrecvman $snap 2>&1 | $ulog
+            local hold_status="${PIPESTATUS[0]}"
+            if [[ $hold_status != 0 ]]; then
+                $ulog "unable to place a hold on our snapshots: ${snap}"
+                return -3
+            fi
+        fi
+        $ulog "estimating size of sending ${snap}"
+        local size=$( zfs $SEND -v -n $inc $snap 2>&1 | tail -1 | cut -d" " -f 5 )
+        # could be 0 or 400 or 4K or 9.3g, etc.
+        local suf=$( echo $size | sed -E 's/[0-9]+\.?[0-9]*//' | tr '[:lower:]' '[:upper:]' )
+        size=$( echo $size | sed -E 's/[pPtTgGmMkKB]$//' ) # remove known suffixes
+	if [[ $suf != 'B' ]]; then
+        	size=$( echo "${size} * 1024" | bc | sed -E 's/\.[0-9]+//' ) # use bc to multiply decimals, sed to make ceil()
+	fi
+        case $suf in
+            B)
+		suf=''
+		;;
+            K)
+                suf=''
+                ;;
+            M)
+                suf='K'
+                ;;
+            G)
+                suf='M'
+                ;;
+            T)
+                suf='G'
+                ;;
+            P)
+                suf='T'
+                ;;
+        esac
+        $ulog "estimated size of sending ${snap} is ${size}${suf}"
+        local pv_more="-s ${size}${suf}"
+        if [[ $USE_MBUFFER == 'yes' ]]; then
+            ssh "${USER}@${REMOTE}" "mbuffer ${MBUFFER} -q -I ${PORT} | zfs ${RECV} ${dest}" 2>&1 | $ulog &
+            sleep 5
+            zfs $SEND $inc $snap 2> >($ulog)|
+            mbuffer $MBUFFER $MBUFFER_SEND_OPTS -O ${REMOTE}:${PORT}
+            zfs_send_status="${PIPESTATUS[0]}"
+            $ulog "zfs send exited with status: ${zfs_send_status}"
+            $ulog "about to wait on zfs send (this may take a while and appear to have hung)"
+            wait
+            zfs_recv_status="${PIPESTATUS[0]}"
+            $ulog "zfs recv exited with status: ${zfs_recv_status}"
+        else
+            zfs $SEND $inc $snap 2> >($ulog) | pv $PV_OPTS $pv_more | ssh "${USER}@${REMOTE}" "zfs ${RECV} ${dest}" 2>&1 | $ulog
+            pipe_status=("${PIPESTATUS[@]}")
+            zfs_send_status="${pipe_status[0]}"
+            zfs_recv_status="${pipe_status[2]}"
+            $ulog "zfs send exited with status: ${zfs_send_status}"
+            $ulog "zfs recv exited with status: ${zfs_recv_status}"
+        fi
+        if [[ $zfs_send_status != 0 ]]; then
+            return $zfs_send_status
+        elif [[ $zfs_recv_status != 0 ]]; then
+            return $zfs_recv_status
+        else
+            # both must be zero
+            return 0
+        fi
+    ) 9>$lock
+}
+
+function terminal_options {
+if [ -t 1 ]; then
+    ISTERM=1
+    LOGGER_EXTRA='-s' # enable logger output to stderr
+    PV_OPTS='-perb' # enable all the magic output from pv
+    MBUFFER_SEND_OPTS='' # don't do quiet mode, we have a term
+    ulog="logger ${LOGGER_EXTRA} -p user.notice -t "$(basename $0 2>/dev/null)"[${$}]"
+else
+    ISTERM=0
+    LOGGER_EXTRA='' # don't enable stderr output
+    PV_OPTS='-q' # make pv quiet
+    MBUFFER_SEND_OPTS='-q' # enable send side -q, no terminal
+    ulog="logger ${LOGGER_EXTRA} -p user.notice -t "$(basename $0 2>/dev/null)"[${$}]"
+fi
+}
+

@@ -1,0 +1,4 @@
+#!/usr/bin/env ruby
+
+require 'zfs_mgmt'
+print ZfsMgmt.readsnaps()

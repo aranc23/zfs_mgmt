@@ -1,0 +1,69 @@
+#! /usr/bin/perl
+
+use strict;
+use warnings;
+
+use Getopt::Long;
+use POSIX qw( strftime mktime );
+
+my %months=(Jan => 0,
+             Feb => 1,
+             Mar => 2,
+             Apr => 3,
+             May => 4,
+             Jun => 5,
+             Jul => 6,
+             Aug => 7,
+             Sep => 8,
+             Oct => 9,
+             Nov => 10,
+             Dec => 11,
+            );
+
+my $DESTROY=0;
+my $SNAP=1;
+my $VERBOSE=0;
+
+GetOptions('snap!'    => \$SNAP,
+           'destroy!' => \$DESTROY,
+           'v|verbose'=> \$VERBOSE,
+          );
+
+my $time=strftime('%F%T',localtime(time()));
+$time =~ s/[\:\-]//g;
+
+foreach(`/sbin/zfs list -t filesystem,volume -o name,zfssnapman:snap,zfssnapman:destroy -H`) {
+  chomp;
+  my ($zfs,$snap,$days)=split(/\t/);
+  if($SNAP and ($snap eq 'true' or $snap eq 'on')) {
+    my $com="/sbin/zfs snapshot $zfs\@zfssnapman-$time";
+    $VERBOSE and print $com."\n";
+    system($com);
+    if($? != 0) {
+      warn "unable to create zfs snapshot for $zfs at $time";
+      warn "failed command: $com";
+    }
+  }
+  if($DESTROY and $days =~ /\d+/) {
+    foreach(`/sbin/zfs list -t snapshot -o name,creation -s creation -r -H $zfs`) {
+      chomp;
+      my ($snap,$creation)=split(/\t/);
+      next unless $snap =~ /^$zfs\@/;
+      unless($creation =~ /\s+(\w\w\w)\s+(\d+)\s+(\d+)\:(\d+)\s+(\d\d\d\d)/) {
+        die "unable to parse the date: $creation";
+      }
+      my $age=mktime(0,$4,$3,$2,$months{$1},($5-1900));
+      #printf("%s\t%s\t%s\t%d\t%s\n",strftime('%F %T',localtime(time())),$creation,strftime('%F %T',localtime($age)),$days,strftime('%F %T',localtime($age + ($days * 24 * 60 * 60 ))));
+      if(time() > ($age + ($days * 24 * 60 * 60 ))) {
+        my $comment=sprintf("removing: %s created at %s\n",$snap,strftime('%F %T',localtime($age)));
+        my $command="/sbin/zfs destroy $snap";
+        $VERBOSE and print $comment;
+        system($command);
+        if($? != 0) {
+          warn 'failed '.$comment;
+          warn "failed command: $command";
+        }
+      }
+    }
+  }
+}
