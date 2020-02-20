@@ -1,11 +1,27 @@
 require "thor"
 require "zfs_mgmt"
 
+class Snapshot < Thor
+  desc "purge", "purge snapshots or die trying"
+  def purge(noop=true)
+    ZfsMgmt.snapshot_purge(noop)
+  end
+end
+
 class ZfsMgr < Thor
+  class_option :noop, :type => :boolean
   desc "readsnaps", "actually just run readsnaps"
   def readsnaps()
     print ZfsMgmt.readsnaps().join('')
   end
+  desc "zfsget FS", "run zfs get"
+  option :properties, :type => :array, :default => ['name']
+  option :types, :type => :array, :default => ['filesystem','volume']
+  def zfsget(fs)
+    pp ZfsMgmt.zfsget(properties=options[:properties],types=options[:types],fs=fs)
+  end
+  desc "snapshot SUBCOMMAND ...ARGS", "manage snapshots"
+  subcommand "snapshot", Snapshot
 end
 
 ZfsMgr.start(ARGV)
