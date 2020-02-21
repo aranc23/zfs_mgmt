@@ -95,6 +95,7 @@ module ZfsMgmt
         saved = {}
         $date_patterns.each do |d,p|
           patterns[d] = newest_date.strftime(p)
+          saved[d] = {}
           if props.has_key?("zfsmgmt:#{d}")
             counters[d] = props["zfsmgmt:#{d}"].to_i
           else
@@ -102,55 +103,64 @@ module ZfsMgmt
           end
         end
         #pp patterns,counters
-        sorted.each do |snap_name|
-          snaptime = local_epoch_to_datetime(snaps[snap_name]['creation'])
-          $date_patterns.each do |d,p|
-            unless counters[d] > 0
-              next
-            end
+        $date_patterns.each do |d,p|
+          if counters[d] == 0
+            $logger.debug("skipping scan for #{d} snapshots")
+            next
+          end
+          sorted.each do |snap_name|
+            snaptime = local_epoch_to_datetime(snaps[snap_name]['creation'])
             pat = snaptime.strftime(p)
-            #pp snap_name,snaptime,patterns[d],pat
-            #system("date -d @#{snaps[snap_name]['creation']}")
-            if patterns[d] != pat
-              patterns[d] = pat
-              unless saved.has_key?(snap_name)
-                saved[snap_name]=[]
-              end
-              saved[snap_name].push("#{d} \##{props["zfsmgmt:#{d}"].to_i-counters[d]+1}: #{pat}")
+            if saved[d].has_key?(pat)
+              # update the existing current save snapshot for this timeframe
+              $logger.debug("updating the saved snapshot for #{pat} to #{snap_name} at #{snaptime}")
+              saved[d][pat] = snap_name
+            elsif counters[d] > 0
+              # new pattern, and we want to save more snaps of this type
+              $logger.debug("new pattern #{pat}, saving #{snap_name} at #{snaptime}")
               counters[d] -= 1
+              saved[d][pat] = snap_name
+            else
+              # in theory, this is a new pattern but we are out of
+              # slots to fill, so stop looping through snapshots for
+              # this pattern
+              $logger.debug("new pattern #{pat}, but we have no more slots to fill")
+              break
             end
+            
           end
         end
-        deleteme = sorted - saved.keys
-        $logger.info("deleting #{deleteme.length} snapshots for #{zfs}")
-        if deleteme.length > 0
-          deleteme.each do |snap_name|
-            $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
-          end
-          saved.each do |snap_name,info|
-            $logger.debug("saved: #{snap_name} #{info.join(',')} creation #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
-          end
-          bigarg = "#{zfs}@#{deleteme.map { |s| s.split('@')[1] }.join(',')}"
-          com_base = "zfs destroy -p"
-          if noop
-            com_base = "#{com_base}n"
-          end
-          if verbopt
-            com_base = "#{com_base}v"
-          end
-          com = "#{com_base} #{bigarg}"
-          # this is just a guess about how big things can be before running zfs will fail
-          if bigarg.length >= 131072 or com.length >= (2097152-10000) 
-            deleteme.each do |snap_name|
-              minicom="#{com_base} #{snap_name}"
-              $logger.info(minicom)
-              system(minicom)
-            end
-          else
-            $logger.info(com)
-            system(com)
-          end
-        end
+        pp counters,saved
+        # deleteme = sorted - saved.keys
+        # $logger.info("deleting #{deleteme.length} snapshots for #{zfs}")
+        # if deleteme.length > 0
+        #   deleteme.each do |snap_name|
+        #     $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
+        #   end
+        #   saved.each do |snap_name,info|
+        #     $logger.debug("saved: #{snap_name} #{info.join(',')} creation #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
+        #   end
+        #   bigarg = "#{zfs}@#{deleteme.map { |s| s.split('@')[1] }.join(',')}"
+        #   com_base = "zfs destroy -p"
+        #   if noop
+        #     com_base = "#{com_base}n"
+        #   end
+        #   if verbopt
+        #     com_base = "#{com_base}v"
+        #   end
+        #   com = "#{com_base} #{bigarg}"
+        #   # this is just a guess about how big things can be before running zfs will fail
+        #   if bigarg.length >= 131072 or com.length >= (2097152-10000) 
+        #     deleteme.each do |snap_name|
+        #       minicom="#{com_base} #{snap_name}"
+        #       $logger.info(minicom)
+        #       system(minicom)
+        #     end
+        #   else
+        #     $logger.info(com)
+        #     system(com)
+        #   end
+        # end
       end
     end
   end
