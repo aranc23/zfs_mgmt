@@ -33,3 +33,13 @@ To install this gem onto your local machine, run `bundle exec rake install`. To 
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at https://github.com/[USERNAME]/zfs_mgmt.
+
+## zfs user properties
+
+zfsmgmt:weekly: integer n weekly snapshots to keep
+zfsmgmt:daily: integer n daily snapshots to keep
+zfsmgmt:hourly: integer n hour snapshots to keep
+zfsmgmt:minage: integer seconds, minimum age of a snapshot before it will be considered for deletion
+zfsmgmt:monthly: integer n montly snapshots to keep
+zfsmgmt:yearly: integer n yearly backups
+zfsmgmt:manage: true/false (only manage snapshots if literal string 'true', all other values are false
