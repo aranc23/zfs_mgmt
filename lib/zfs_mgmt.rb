@@ -64,10 +64,10 @@ module ZfsMgmt
       unless results.has_key?(params[0])
         results[params[0]] = {}
       end
-      unless params[2] == '-'
+      if params[2] != '-'
         results[params[0]][params[1]] = params[2]
       end
-      unless params[3] == '-'
+      if params[3] != '-'
         results[params[0]]["#{params[1]}@source"] = params[3]
       end
     end
