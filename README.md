@@ -43,3 +43,12 @@ zfsmgmt:minage: integer seconds, minimum age of a snapshot before it will be con
 zfsmgmt:monthly: integer n montly snapshots to keep
 zfsmgmt:yearly: integer n yearly backups
 zfsmgmt:manage: true/false (only manage snapshots if literal string 'true', all other values are false
+
+## Philosophy of Operation
+
+### Timestamps in snapshot names and logging
+Timestamps should use localtime. If the user wants gmt/utc they should set the system time apropriately.  (zfs uses local time in the creation property so using anything else just creates apparent mismatches.)
+
+### Snapshot Management / zfs destroy
+When destroying snapshots according to a given policy, all snapshots should be considered for deletion and all snapshots should be considered as potentially satisfying the retention policy regardless of the name of the snapshot.  Only the creation property really matters unless the user configures zfsmgmt otherwise.  If the user wants to preserve a given snapshot it should be preserved using the zfs hold mechanism.  This allows zfs_mgmt to manage snapshots indepentantly of the mechanism used to create them.
+
