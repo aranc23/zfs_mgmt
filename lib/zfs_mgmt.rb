@@ -59,7 +59,13 @@ module ZfsMgmt
   def self.zfsget(properties: ['name'],types: ['filesystem','volume'],fs: '')
     results={}
     com = ['zfs', 'get', '-Hp', properties.join(','), '-t', types.join(','), fs]
-    %x| #{com.join(' ')} |.split("\n").each do |line|
+    so,se,status = Open3.capture3(com)
+    if status != 0
+      $logger.error("failed to execute \"#{com.join(' ')}\", exit status #{status}"
+      $logger.error(se)
+      exit status
+    end
+    so.split("\n").each do |line|
       params = line.split("\t")
       unless results.has_key?(params[0])
         results[params[0]] = {}
@@ -223,5 +229,12 @@ module ZfsMgmt
         end
       end
     end
+  end
+  def self.popper(*args)
+    Open3.popen3(args) {|stdin, stdout, stderr, wait_thr|
+    pid = wait_thr.pid # pid of the started process.
+    wait
+    exit_status = wait_thr.value # Process::Status object returned.
+  }
   end
 end
