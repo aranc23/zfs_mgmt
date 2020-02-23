@@ -61,7 +61,7 @@ module ZfsMgmt
     com = ['zfs', 'get', '-Hp', properties.join(','), '-t', types.join(','), fs]
     so,se,status = Open3.capture3(com)
     if status != 0
-      $logger.error("failed to execute \"#{com.join(' ')}\", exit status #{status}"
+      $logger.error("failed to execute \"#{com.join(' ')}\", exit status #{status}")
       $logger.error(se)
       exit status
     end
