@@ -4,6 +4,7 @@ require 'pp'
 require 'date'
 require 'logger'
 require 'text-table'
+require 'open3'
 
 $logger = Logger.new(STDERR)
 
@@ -59,7 +60,7 @@ module ZfsMgmt
   def self.zfsget(properties: ['name'],types: ['filesystem','volume'],fs: '')
     results={}
     com = ['zfs', 'get', '-Hp', properties.join(','), '-t', types.join(','), fs]
-    so,se,status = Open3.capture3(com)
+    so,se,status = Open3.capture3(com.join(' '))
     if status != 0
       $logger.error("failed to execute \"#{com.join(' ')}\", exit status #{status}")
       $logger.error(se)
