@@ -61,9 +61,15 @@ module ZfsMgmt
     results={}
     com = ['zfs', 'get', '-Hp', properties.join(','), '-t', types.join(','), fs]
     so,se,status = Open3.capture3(com.join(' '))
+    if status.signaled?
+      $logger.error("process was signalled \"#{com.join(' ')}\", termsig #{status.termsig}")
+      raise 'ZfsGetError'
+    end
     unless status.success?
       $logger.error("failed to execute \"#{com.join(' ')}\", exit status #{status.exitstatus}")
-      exit 1
+      $logger.error(se)
+      $logger.debug(so)
+      raise 'ZfsGetError'
     end
     so.split("\n").each do |line|
       params = line.split("\t")
