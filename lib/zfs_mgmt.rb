@@ -110,16 +110,6 @@ module ZfsMgmt
     end
     self.zfsget(properties: custom_properties()).each do |zfs,props|
       if props.has_key?('zfsmgmt:manage') and props['zfsmgmt:manage'] == 'true'
-        # in order to process the filesystem we must have some guidelines as to what to keep
-        # otherwise we would simply delete everything
-        # maybe we could just refuse to delete anything unless we have saved at least one thing?
-        # might be simpler
-        # $date_patterns.keys.each do |spec|
-        #   if props.has_key?("zfsmgmt:#{spec}") and props.has_key?("zfsmgmt:#{spec}") =~ /^\d+$/
-        #     print "found something\n"
-        #     break
-        #   end
-        # end
         minage = 0
         if props.has_key?('zfsmgmt:minage')
           minage = timespec_to_seconds(props['zfsmgmt:minage'])
