@@ -31,6 +31,8 @@ module ZfsMgmt
       'yearly',
       'manage',
       'minage',
+      'matchsnaps',
+      'ignoresnaps',
     ].map do |p|
       ['zfsmgmt',p].join(':')
     end
@@ -134,6 +136,14 @@ module ZfsMgmt
     end
 
     sorted.each do |snap_name|
+      if  props.has_key?('zfsmgmt:ignoresnaps') and /#{props['zfsmgmt:ignoresnaps']}/ =~ snap_name
+        $logger.debug("skipping #{snap_name} because it matches ignoresnaps pattern: #{props['zfsmgmt:ignoresnaps']}")
+        next
+      end
+      if  props.has_key?('zfsmgmt:matchsnaps') and not /#{props['zfsmgmt:matchsnaps']}/ =~ snap_name
+        $logger.debug("skipping #{snap_name} because it does not match matchsnaps pattern: #{props['zfsmgmt:matchsnaps']}")
+        next
+      end
       snaptime = local_epoch_to_datetime(snaps[snap_name]['creation'])
       $date_patterns.each do |d,p|
         pat = snaptime.strftime(p)
@@ -160,7 +170,10 @@ module ZfsMgmt
     # delete everything not in the list of saved snapshots
     deleteme = sorted - saved_snaps
     deleteme = deleteme.select { |snap|
-      if minage > 0 and Time.at(snaps[snap]['creation'] + minage) > Time.now()
+      if props.has_key?('zfsmgmt:ignoresnaps') and /#{props['zfsmgmt:ignoresnaps']}/ =~ snap
+        $logger.debug("skipping #{snap} because it matches ignoresnaps pattern: #{props['zfsmgmt:ignoresnaps']}")
+        false
+      elsif minage > 0 and Time.at(snaps[snap]['creation'] + minage) > Time.now()
         $logger.debug("skipping due to minage: #{snap} #{local_epoch_to_datetime(snaps[snap]['creation']).strftime('%F %T')}")
         false
       else
