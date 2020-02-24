@@ -128,10 +128,6 @@ module ZfsMgmt
           end
         end
         sorted = snaps.keys.sort { |a,b| snaps[b]['creation'] <=> snaps[a]['creation'] }
-        newest_snapshot_name = sorted.shift
-        # set the current patterns
-        newest_date = local_epoch_to_datetime(snaps[newest_snapshot_name]['creation'])
-        #pp newest_snapshot_name,newest_date
         counters = {}
         saved = {}
         sanity_check = false
