@@ -16,6 +16,11 @@ $date_patterns = {
   'yearly' => '%Y',
 }
 
+$properties_xlate = {
+  'userrefs' => ->(x) { x.to_i },
+  'creation' => ->(x) { x.to_i },
+}
+
 module ZfsMgmt
   def self.custom_properties()
     return [
@@ -77,7 +82,11 @@ module ZfsMgmt
         results[params[0]] = {}
       end
       if params[2] != '-'
-        results[params[0]][params[1]] = params[2]
+        if $properties_xlate.has_key?(params[1])
+          results[params[0]][params[1]] = $properties_xlate[params[1]].call(params[2])
+        else
+          results[params[0]][params[1]] = params[2]
+        end
       end
       if params[3] != '-'
         results[params[0]]["#{params[1]}@source"] = params[3]
@@ -188,14 +197,6 @@ module ZfsMgmt
       unless sanity_check == true
         $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid #{$date_patterns.keys.join('/')} configuration, skipping")
         next # zfs
-      end
-      # these are integers and probably should be converted by zfsget
-      snaps.each do |s,h|
-        ['creation','userrefs'].each do |p|
-          if h.has_key?(p)
-            snaps[s][p] = snaps[s][p].to_i
-          end
-        end
       end
       # call the function that decides who to save and who to delete
       (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs,props,snaps)
