@@ -4,7 +4,7 @@ require "zfs_mgmt"
 class Snapshot < Thor
   desc "destroy", "apply the snapshot destroy policy to zfs"
   def destroy()
-    ZfsMgmt.snapshot_destroy(noop: options[:noop], verbopt: options[:verbose], debugopt: options[:debug])
+    ZfsMgmt.snapshot_destroy(noop: options[:noop], verbopt: options[:verbose], debugopt: options[:debug], filter: options[:filter])
   end
 end
 
@@ -12,7 +12,8 @@ class ZfsMgr < Thor
   class_option :noop, :type => :boolean, :default => false
   class_option :debug, :type => :boolean, :default => false
   class_option :verbose, :type => :boolean, :default => false
-
+  class_option :filter, :type => :string, :default => '.+'
+  
   desc "readsnaps", "actually just run readsnaps"
   def readsnaps()
     print ZfsMgmt.readsnaps().join('')
