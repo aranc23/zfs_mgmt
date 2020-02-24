@@ -67,8 +67,8 @@ module ZfsMgmt
     end
     unless status.success?
       $logger.error("failed to execute \"#{com.join(' ')}\", exit status #{status.exitstatus}")
-      $logger.error(se)
-      $logger.debug(so)
+      so.split("\n").each { |l| $logger.debug("stdout: #{l}") }
+      se.split("\n").each { |l| $logger.error("stderr: #{l}") }
       raise 'ZfsGetError'
     end
     so.split("\n").each do |line|
