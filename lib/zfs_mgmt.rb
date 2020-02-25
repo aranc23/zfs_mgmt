@@ -58,7 +58,7 @@ module ZfsMgmt
     if md.length == 2
       return spec.to_i
     elsif md.length == 3
-      return md[1].to_3i * specs[md[2]]
+      return md[1].to_i * specs[md[2]]
     else
       return spec
     end
