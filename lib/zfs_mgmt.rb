@@ -58,7 +58,7 @@ module ZfsMgmt
     if md.length == 2
       return spec.to_i
     elsif md.length == 3
-      return md[1].to_i * specs[md[2]]
+      return md[1].to_3i * specs[md[2]]
     else
       return spec
     end
@@ -153,7 +153,7 @@ module ZfsMgmt
           saved[d][pat] = snap_name
         elsif counters[d] > 0
           # new pattern, and we want to save more snaps of this type
-          $logger.debug("new pattern \"#{pat}\" n#{counters[d]} #{d} snapshot}, saving #{snap_name} at #{snaptime}")
+          $logger.debug("new pattern \"#{pat}\" n#{counters[d]} #{d} snapshot, saving #{snap_name} at #{snaptime}")
           counters[d] -= 1
           saved[d][pat] = snap_name
         end
@@ -230,7 +230,6 @@ module ZfsMgmt
         deleteme.each do |snap_name|
           $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
         end
-        bigarg = "#{zfs}@#{deleteme.map { |s| s.split('@')[1] }.join(',')}"
         com_base = "zfs destroy -p"
         if noop
           com_base = "#{com_base}n"
@@ -238,17 +237,16 @@ module ZfsMgmt
         if verbopt
           com_base = "#{com_base}v"
         end
-        com = "#{com_base} #{bigarg}"
-        # this is just a guess about how big things can be before running zfs will fail
-        if bigarg.length >= 131072 or com.length >= (2097152-10000) 
-          deleteme.each do |snap_name|
-            minicom="#{com_base} #{snap_name}"
-            $logger.info(minicom)
-            system(minicom)
+        for i in 0..(deleteme.length - 1) do
+          max = deleteme.length - 1 - i
+          bigarg = "#{zfs}@#{deleteme[i..max].map { |s| s.split('@')[1] }.join(',')}"
+          com = "#{com_base} #{bigarg}"
+          if bigarg.length >= 131072 or com.length >= (2097152-10000)
+            next
           end
-        else
           $logger.info(com)
           system(com)
+          break
         end
       end
     end
