@@ -166,13 +166,9 @@ module ZfsMgmt
     }
     return saved,saved_snaps,deleteme
   end
-  def self.snapshot_destroy(noop: false, verbopt: false, debugopt: false, filter: '.+')
-    if debugopt
-      $logger.level = Logger::DEBUG
-    else
-      $logger.level = Logger::INFO
-    end
-    self.zfsget(properties: custom_properties()).each do |zfs,props|
+  def self.zfs_managed_list(filter: '.+')
+    zfss = [] # array of arrays
+    zfsget(properties: custom_properties()).each do |zfs,props|
       unless /#{filter}/ =~ zfs
         next
       end
@@ -188,20 +184,42 @@ module ZfsMgmt
         $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
         next # zfs
       end
+      zfss.push([zfs,props,snaps])
+    end
+    return zfss
+  end
+  def self.snapshot_policy(verbopt: false, debugopt: false, filter: '.+')
+    if debugopt
+      $logger.level = Logger::DEBUG
+    else
+      $logger.level = Logger::INFO
+    end
+    zfs_managed_list(filter: filter).each do |zdata|
+      (zfs,props,snaps) = zdata
       # call the function that decides who to save and who to delete
       (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs,props,snaps)
 
-      if verbopt
-        # print a table of saved snapshots with the reasons it is being saved
-        table = Text::Table.new
-        table.head = ['snap','creation','hourly','daily','weekly','monthly','yearly']
-        table.rows = []
-        saved_snaps.sort { |a,b| snaps[b]['creation'] <=> snaps[a]['creation'] }.each do |snap|
-          table.rows << [snap,local_epoch_to_datetime(snaps[snap]['creation'])] + find_saved_reason(saved,snap)
-        end
-        print table.to_s
+      # print a table of saved snapshots with the reasons it is being saved
+      table = Text::Table.new
+      table.head = ['snap','creation','hourly','daily','weekly','monthly','yearly']
+      table.rows = []
+      saved_snaps.sort { |a,b| snaps[b]['creation'] <=> snaps[a]['creation'] }.each do |snap|
+        table.rows << [snap,local_epoch_to_datetime(snaps[snap]['creation'])] + find_saved_reason(saved,snap)
       end
-      
+      print table.to_s
+    end
+  end
+  def self.snapshot_destroy(noop: false, verbopt: false, debugopt: false, filter: '.+')
+    if debugopt
+      $logger.level = Logger::DEBUG
+    else
+      $logger.level = Logger::INFO
+    end
+    zfs_managed_list(filter: filter).each do |zdata|
+      (zfs,props,snaps) = zdata
+      # call the function that decides who to save and who to delete
+      (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs,props,snaps)
+    
       $logger.info("deleting #{deleteme.length} snapshots for #{zfs}")
       com_base = "zfs destroy -p"
       if noop
