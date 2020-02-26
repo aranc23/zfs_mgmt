@@ -189,15 +189,8 @@ module ZfsMgmt
         $logger.warn("unable to process this zfs, no snapshots at all: #{zfs}")
         next
       end
-      sanity_check = false
-      $date_patterns.each do |d,p|
-        if props.has_key?("zfsmgmt:#{d}")
-          sanity_check = true
-          break
-        end
-      end
-      unless sanity_check == true
-        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid #{$date_patterns.keys.join('/')} configuration, skipping")
+      unless props.has_key?('zfsmgmt:policy') and policy = policy_parser(props['zfsmgmt:policy'])
+        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
         next # zfs
       end
       # call the function that decides who to save and who to delete
