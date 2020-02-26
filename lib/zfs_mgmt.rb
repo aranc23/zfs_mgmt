@@ -203,24 +203,27 @@ module ZfsMgmt
       end
       
       $logger.info("deleting #{deleteme.length} snapshots for #{zfs}")
-      if deleteme.length > 0
-        deleteme.each do |snap_name|
-          $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
-        end
-        com_base = "zfs destroy -p"
-        if noop
-          com_base = "#{com_base}n"
-        end
-        if verbopt
-          com_base = "#{com_base}v"
-        end
-        for i in 0..(deleteme.length - 1) do
-          max = deleteme.length - 1 - i
-          bigarg = "#{zfs}@#{deleteme[i..max].map { |s| s.split('@')[1] }.join(',')}"
-          com = "#{com_base} #{bigarg}"
-          if bigarg.length >= 131072 or com.length >= (2097152-10000)
-            next
-          end
+      com_base = "zfs destroy -p"
+      if noop
+        com_base = "#{com_base}n"
+      end
+      if verbopt
+        com_base = "#{com_base}v"
+      end
+      deleteme.each do |snap_name|
+        $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
+      end
+      while deleteme.length > 0
+        bigarg = "#{zfs}@#{deleteme.map { |s| s.split('@')[1] }.join(',')}"
+        com = "#{com_base} #{bigarg}"
+        $logger.debug("size of bigarg: #{bigarg.length} size of com: #{com.length}")
+        if bigarg.length >= 131072 or com.length >= (2097152-10000)
+          # too big, so just delete one snapshot and try again
+          com = "#{com_base} #{deleteme.shift}"
+          $logger.info(com)
+          system(com)
+          next
+        else
           $logger.info(com)
           system(com)
           break
