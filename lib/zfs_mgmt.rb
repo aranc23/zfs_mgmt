@@ -111,17 +111,13 @@ module ZfsMgmt
     # never consider the latest snapshot for anything
     newest_snapshot_name = sorted.shift
     
-    counters = {}
+    counters = policy_parser(props['policy'])
+    $logger.debug("#{policy}")
     saved = {}
 
     # set the counters variable to track the number of saved daily/hourly/etc. snapshots
     $date_patterns.each do |d,p|
       saved[d] = {}
-      if props.has_key?("zfsmgmt:#{d}")
-        counters[d] = props["zfsmgmt:#{d}"].to_i
-      else
-        counters[d] = 0
-      end
     end
 
     sorted.each do |snap_name|
