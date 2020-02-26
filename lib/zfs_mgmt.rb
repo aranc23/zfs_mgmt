@@ -258,4 +258,22 @@ module ZfsMgmt
     exit_status = wait_thr.value # Process::Status object returned.
   }
   end
+  def self.policy_parser(str)
+    res = {}
+    map = {}
+    $date_patterns.keys.each do |tf|
+      res[tf]=0
+      map[tf[0]] = tf
+    end
+    p = str.scan(/\d+[#{map.keys.join('')}]/)
+    unless p.length > 0
+      raise "unable to parse the policy configuration #{str}"
+    end
+    p.each do |pi|
+      scn = pi.scan(/(\d+)([#{map.keys.join('')}])/)
+      pp scn
+      res[map[scn[0][1]]] = scn[0][0]
+    end
+    res
+  end
 end
