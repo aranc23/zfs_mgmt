@@ -251,13 +251,7 @@ module ZfsMgmt
       end
     end
   end
-  def self.popper(*args)
-    Open3.popen3(args) {|stdin, stdout, stderr, wait_thr|
-    pid = wait_thr.pid # pid of the started process.
-    wait
-    exit_status = wait_thr.value # Process::Status object returned.
-  }
-  end
+
   def self.policy_parser(str)
     res = {}
     map = {}
