@@ -246,7 +246,7 @@ module ZfsMgmt
     p.each do |pi|
       pp pi
       scn = pi.scan(/(\d+)([#{map.keys.join('')}])/)
-      res[map[scn[0][1]]] = scn[0][0]
+      res[map[scn[0][1]]] = scn[0][0].to_i
     end
     res
   end
