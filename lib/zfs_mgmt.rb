@@ -214,7 +214,7 @@ module ZfsMgmt
         $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
       end
       while deleteme.length > 0
-        bigarg = "#{zfs}@#{deleteme.map { |s| s.split('@')[1] }.join(',')}"
+        bigarg = "#{zfs}@#{deleteme.reverse.map { |s| s.split('@')[1] }.join(',')}"
         com = "#{com_base} #{bigarg}"
         $logger.debug("size of bigarg: #{bigarg.length} size of com: #{com.length}")
         if bigarg.length >= 131072 or com.length >= (2097152-10000)
