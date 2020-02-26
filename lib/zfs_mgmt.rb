@@ -230,6 +230,7 @@ module ZfsMgmt
   end
 
   def self.policy_parser(str)
+    pp str
     res = {}
     map = {}
     $date_patterns.keys.each do |tf|
@@ -242,6 +243,7 @@ module ZfsMgmt
       raise "unable to parse the policy configuration #{str}"
     end
     p.each do |pi|
+      pp pi
       scn = pi.scan(/(\d+)([#{map.keys.join('')}])/)
       res[map[scn[0][1]]] = scn[0][0]
     end
