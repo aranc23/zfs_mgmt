@@ -110,7 +110,7 @@ module ZfsMgmt
     # never consider the latest snapshot for anything
     newest_snapshot_name = sorted.shift
     
-    counters = policy_parser(props['policy'])
+    counters = policy_parser(props['zfsmgmt:policy'])
     $logger.debug("#{policy}")
     saved = {}
 
