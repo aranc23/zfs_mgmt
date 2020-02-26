@@ -111,7 +111,7 @@ module ZfsMgmt
     newest_snapshot_name = sorted.shift
     
     counters = policy_parser(props['zfsmgmt:policy'])
-    $logger.debug("#{policy}")
+    $logger.debug("#{counters}")
     saved = {}
 
     # set the counters variable to track the number of saved daily/hourly/etc. snapshots
