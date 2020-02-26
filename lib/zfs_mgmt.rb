@@ -24,11 +24,7 @@ $properties_xlate = {
 module ZfsMgmt
   def self.custom_properties()
     return [
-      'weekly',
-      'daily',
-      'hourly',
-      'monthly',
-      'yearly',
+      'policy',
       'manage',
       'minage',
       'matchsnaps',
@@ -36,15 +32,6 @@ module ZfsMgmt
     ].map do |p|
       ['zfsmgmt',p].join(':')
     end
-  end
-  def self.readsnaps()
-    a=[]
-    File.open('/etc/zfs-list-snapshots.txt',mode='r') do |s|
-      while l = s.gets
-        a << l
-      end
-    end
-    a
   end
   def self.timespec_to_seconds(spec)
     specs = {
