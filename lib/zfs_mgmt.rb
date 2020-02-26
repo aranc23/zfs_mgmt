@@ -42,7 +42,6 @@ module ZfsMgmt
   end
   def self.timespec_to_seconds(spec)
     md = /^(\d+)([smhdw]?)/.match(spec)
-    pp md.length,md
     unless md.length == 3
       raise 'SpecParseError'
     end
@@ -238,6 +237,7 @@ module ZfsMgmt
       map[tf[0]] = tf
     end
     p = str.scan(/\d+[#{map.keys.join('')}]/)
+    pp p
     unless p.length > 0
       raise "unable to parse the policy configuration #{str}"
     end
