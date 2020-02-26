@@ -184,7 +184,6 @@ module ZfsMgmt
         $logger.warn("unable to process this zfs, no snapshots at all: #{zfs}")
         next
       end
-      pp zfs
       unless props.has_key?('zfsmgmt:policy') and policy = policy_parser(props['zfsmgmt:policy'])
         $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
         next # zfs
@@ -231,7 +230,6 @@ module ZfsMgmt
   end
 
   def self.policy_parser(str)
-    pp str
     res = {}
     map = {}
     $date_patterns.keys.each do |tf|
@@ -239,12 +237,10 @@ module ZfsMgmt
       map[tf[0]] = tf
     end
     p = str.scan(/\d+[#{map.keys.join('')}]/)
-    pp p
     unless p.length > 0
       raise "unable to parse the policy configuration #{str}"
     end
     p.each do |pi|
-      pp pi
       scn = pi.scan(/(\d+)([#{map.keys.join('')}])/)
       res[map[scn[0][1]]] = scn[0][0].to_i
     end
