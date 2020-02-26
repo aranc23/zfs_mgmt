@@ -15,6 +15,13 @@ $date_patterns = {
   'monthly' => '%Y-%m',
   'yearly' => '%Y',
 }
+$time_specs = {
+  's' => 1,
+  'm' => 60,
+  'h' => 60*60,
+  'd' => 24*60*60,
+  'w' => 7*24*60*60,
+}
 
 $properties_xlate = {
   'userrefs' => ->(x) { x.to_i },
@@ -34,20 +41,15 @@ module ZfsMgmt
     end
   end
   def self.timespec_to_seconds(spec)
-    specs = {
-      's' => 1,
-      'm' => 60,
-      'h' => 60*60,
-      'd' => 24*60*60,
-      'w' => 7*24*60*60,
-    }
     md = /^(\d+)([smhdw]?)/.match(spec)
-    if md.length == 2
-      return spec.to_i
-    elsif md.length == 3
-      return md[1].to_i * specs[md[2]]
+    pp md.length,md
+    unless md.length == 3
+      raise 'SpecParseError'
+    end
+    if md[2] and md[2].length > 0
+      return md[1].to_i * $time_specs[md[2]]
     else
-      return spec
+      return md[1].to_i
     end
   end
       
@@ -252,7 +254,6 @@ module ZfsMgmt
     end
     p.each do |pi|
       scn = pi.scan(/(\d+)([#{map.keys.join('')}])/)
-      pp scn
       res[map[scn[0][1]]] = scn[0][0]
     end
     res
