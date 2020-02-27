@@ -212,11 +212,10 @@ module ZfsMgmt
       end
       # print a table of saved snapshots with the reasons it is being saved
       table = Text::Table.new
-      table.head = ['snap','written','creation','hourly','daily','weekly','monthly','yearly']
+      table.head = ['snap','creation','hourly','daily','weekly','monthly','yearly']
       table.rows = []
       saved_snaps.sort { |a,b| snaps[b]['creation'] <=> snaps[a]['creation'] }.each do |snap|
-        snapwritten = Filesize.from("#{snaps[snap]['written']} B").pretty
-        table.rows << [snap,snapwritten,local_epoch_to_datetime(snaps[snap]['creation'])] + find_saved_reason(saved,snap)
+        table.rows << [snap,local_epoch_to_datetime(snaps[snap]['creation'])] + find_saved_reason(saved,snap)
       end
       print table.to_s
     end
