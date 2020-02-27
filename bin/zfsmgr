@@ -2,6 +2,14 @@ require "thor"
 require "zfs_mgmt"
 
 class Snapshot < Thor
+  class_option :noop, :type => :boolean, :default => false,
+               :desc => 'pass -n option to zfs commands'
+  class_option :verbose, :type => :boolean, :default => false,
+               :desc => 'pass -v option to zfs commands'
+  class_option :debug, :type => :boolean, :default => false,
+               :desc => 'set logging level to debug'
+  class_option :filter, :type => :string, :default => '.+',
+               :desc => 'only act on zfs matching this regexp'
   desc "destroy", "apply the snapshot destroy policy to zfs"
   def destroy()
     ZfsMgmt.snapshot_destroy(noop: options[:noop], verbopt: options[:verbose], debugopt: options[:debug], filter: options[:filter])
@@ -13,11 +21,6 @@ class Snapshot < Thor
 end
 
 class ZfsMgr < Thor
-  class_option :noop, :type => :boolean, :default => false
-  class_option :debug, :type => :boolean, :default => false
-  class_option :verbose, :type => :boolean, :default => false
-  class_option :filter, :type => :string, :default => '.+'
-  
   desc "zfsget [ZFS]", "execute zfs get for the given properties and types and parse the output into a nested hash"
   method_option :properties, :type => :array, :default => ['name'], :desc => "List of properties passed to zfs get"
   method_option :types,      :type => :array, :default => ['filesystem','volume'], enum: ['filesystem','volume','snapshot'], :desc => "list of types"
