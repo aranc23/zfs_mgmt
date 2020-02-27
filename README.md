@@ -16,6 +16,8 @@ Therefore, building the gem and installing, or running ruby inside the src/ dire
 
 ## Usage
 
+The most common usage pattern would be to set zfs properties as explained below, then use **zfsmgr snapshot policy** to print a table of what would be kept and for what reason.  Then use **zfsmgr snapshot destroy --noop** to see what would be destroyed, and finally **zfsmgr snapshot destroy** without the --noop option to actually remove snapshots.
+
     Commands:
       zfsmgr help [COMMAND]               # Describe available commands or one specific command
       zfsmgr snapshot SUBCOMMAND ...ARGS  # manage snapshots
@@ -34,6 +36,57 @@ Therefore, building the gem and installing, or running ruby inside the src/ dire
                                    # Default: .+
 
 
+## Example output
+    [accx@a-lnx005:~/src/zfs_mgmt] (master)$ ruby -I lib bin/zfsmgr snapshot policy --filter pics                                                                 
+    +------------------------------------------------------------+---------------------------+--------------------+------------+--------------+---------+--------+
+    |                            snap                            |         creation          |       hourly       |   daily    |    weekly    | monthly | yearly |
+    +------------------------------------------------------------+---------------------------+--------------------+------------+--------------+---------+--------+
+    | backup/beast/data/pics@autosnap-2020-02-27T12:17:01-0600   | 2020-02-27T12:17:01-06:00 | 2020-02-27 Hour 12 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T11:17:01-0600   | 2020-02-27T11:17:01-06:00 | 2020-02-27 Hour 11 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T10:17:01-0600   | 2020-02-27T10:17:01-06:00 | 2020-02-27 Hour 10 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T09:17:01-0600   | 2020-02-27T09:17:02-06:00 | 2020-02-27 Hour 09 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T08:17:01-0600   | 2020-02-27T08:17:01-06:00 | 2020-02-27 Hour 08 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T07:17:01-0600   | 2020-02-27T07:17:01-06:00 | 2020-02-27 Hour 07 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T06:17:01-0600   | 2020-02-27T06:17:01-06:00 | 2020-02-27 Hour 06 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T05:17:01-0600   | 2020-02-27T05:17:01-06:00 | 2020-02-27 Hour 05 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T04:17:01-0600   | 2020-02-27T04:17:02-06:00 | 2020-02-27 Hour 04 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T03:17:01-0600   | 2020-02-27T03:17:01-06:00 | 2020-02-27 Hour 03 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T02:17:01-0600   | 2020-02-27T02:17:01-06:00 | 2020-02-27 Hour 02 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T01:17:01-0600   | 2020-02-27T01:17:02-06:00 | 2020-02-27 Hour 01 |            |              |         |        |
+    | backup/beast/data/pics@autosnap-2020-02-27T00:17:01-0600   | 2020-02-27T00:17:01-06:00 | 2020-02-27 Hour 00 | 2020-02-27 |              |         |        |
+    ...
+    | backup/beast/data/pics@zfssendman-20140604092215           | 2014-06-04T09:22:43-05:00 |                    | 2014-06-04 | 2014 Week 22 | 2014-06 |        |
+    | backup/beast/data/pics@migrate3                            | 2014-05-26T08:17:31-05:00 |                    | 2014-05-26 |              |         |        |
+    | backup/beast/data/pics@migrate2                            | 2014-05-25T21:57:28-05:00 |                    | 2014-05-25 | 2014 Week 21 |         |        |
+    | backup/beast/data/pics@migrate1                            | 2014-05-24T10:31:56-05:00 |                    | 2014-05-24 | 2014 Week 20 | 2014-05 | 2014   |
+    | backup/beast/data/pics@20131108144154                      | 2013-11-08T14:41:57-06:00 |                    | 2013-11-08 | 2013 Week 44 | 2013-11 | 2013   |
+    +------------------------------------------------------------+---------------------------+--------------------+------------+--------------+---------+--------+
+
+    [accx@beast:~/src/zfs_mgmt] (master)$ ruby -I lib bin/zfsmgr snapshot destroy --filter pics --noop
+    I, [2020-02-27T16:27:33.381645 #4914]  INFO -- : deleting 21 snapshots for backup/beast/data/pics
+    I, [2020-02-27T16:27:33.381731 #4914]  INFO -- : zfs destroy -pn backup/beast/data/pics@autosnap_2020-02-19_21:00:05_hourly,autosnap_2020-02-19_22:00:05_hourly,autosnap_2020-02-19_23:00:01_hourly,autosnap_2020-02-20_00:00:05_daily,autosnap_2020-02-20_01:00:04_hourly,autosnap_2020-02-20_02:00:04_hourly,autosnap_2020-02-20_03:00:04_hourly,autosnap_2020-02-20_04:00:05_hourly,autosnap_2020-02-20_05:00:05_hourly,autosnap_2020-02-20_07:00:04_hourly,autosnap_2020-02-20_08:00:01_hourly,autosnap_2020-02-20_09:00:05_hourly,autosnap_2020-02-20_10:00:05_hourly,autosnap_2020-02-20_11:00:05_hourly,autosnap_2020-02-20_12:00:05_hourly,autosnap_2020-02-20_13:00:01_hourly,autosnap_2020-02-20_14:00:05_hourly,autosnap_2020-02-20_15:00:05_hourly,autosnap_2020-02-20_16:00:05_hourly,autosnap_2020-02-20_17:00:05_hourly,autosnap_2020-02-20_18:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-19_21:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-19_22:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-19_23:00:01_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_00:00:05_daily
+    destroy backup/beast/data/pics@autosnap_2020-02-20_01:00:04_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_02:00:04_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_03:00:04_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_04:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_05:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_07:00:04_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_08:00:01_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_09:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_10:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_11:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_12:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_13:00:01_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_14:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_15:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_16:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_17:00:05_hourly
+    destroy backup/beast/data/pics@autosnap_2020-02-20_18:00:05_hourly
+    reclaim 0
 
 ## Development
 
@@ -54,18 +107,21 @@ manage snapshots for this filesystem if this property is 'true' (string literal)
  
 ### zfsmgmt:policy
 
-A policy specification consisting of the number of snapshots of a certain time frame to keep, such as:
+A policy specification consisting of the number of snapshots of a
+certain time frame to keep.  A zfs must have a valid policy
+specification or zfs_mgmt will not destroy any snapshots.
 
-- 30d 
-- 8w15d
-- 1y1m1y1d1h
-- 72h
+Examples:
+- 30d ( 30 daily snapshots )
+- 8w15d (8 weekly, and 15 daily snapshots)
+- 1y1m1y1d1h (1 of each time frame worth of snapshots)
+- 72h (72 hourly snapshots)
 
-The order each timeframe is listed in does not matter, and the supported specs are as follows:
+The order in which each timeframe is listed in does not matter, and the supported specs are as follows:
 
 - h - hourly
 - d - daily
-- w - weekly
+- w - weekly (Sunday)
 - m - monthly
 - y - yearly
 
