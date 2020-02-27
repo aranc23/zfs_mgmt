@@ -59,9 +59,9 @@ module ZfsMgmt
     end
   end
       
-  def self.zfsget(properties: ['name'],types: ['filesystem','volume'],fs: '')
+  def self.zfsget(properties: ['name'],types: ['filesystem','volume'],zfs: '')
     results={}
-    com = ['zfs', 'get', '-Hp', properties.join(','), '-t', types.join(','), fs]
+    com = ['zfs', 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
     so,se,status = Open3.capture3(com.join(' '))
     if status.signaled?
       $logger.error("process was signalled \"#{com.join(' ')}\", termsig #{status.termsig}")
@@ -182,7 +182,7 @@ module ZfsMgmt
       unless props.has_key?('zfsmgmt:manage') and props['zfsmgmt:manage'] == 'true'
         next
       end
-      snaps = self.zfsget(properties: ['name','creation','userrefs','used','written','referenced'],types: ['snapshot'], fs: zfs)
+      snaps = self.zfsget(properties: ['name','creation','userrefs','used','written','referenced'],types: ['snapshot'], zfs: zfs)
       if snaps.length == 0
         $logger.warn("unable to process this zfs, no snapshots at all: #{zfs}")
         next

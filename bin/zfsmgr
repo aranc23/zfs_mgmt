@@ -18,15 +18,13 @@ class ZfsMgr < Thor
   class_option :verbose, :type => :boolean, :default => false
   class_option :filter, :type => :string, :default => '.+'
   
-  desc "readsnaps", "actually just run readsnaps"
-  def readsnaps()
-    print ZfsMgmt.readsnaps().join('')
-  end
-  desc "zfsget FS", "run zfs get"
-  option :properties, :type => :array, :default => ['name']
-  option :types, :type => :array, :default => ['filesystem','volume']
-  def zfsget(fs)
-    pp ZfsMgmt.zfsget(properties: options[:properties], types: options[:types],fs: fs)
+  desc "zfsget [ZFS]", "execute zfs get for the given properties and types and parse the output into a nested hash"
+  method_option :properties, :type => :array, :default => ['name'], :desc => "List of properties passed to zfs get"
+  method_option :types,      :type => :array, :default => ['filesystem','volume'], enum: ['filesystem','volume','snapshot'], :desc => "list of types"
+  def zfsget(zfs)
+    pp ZfsMgmt.zfsget(properties: options[:properties],
+                      types: options[:types],
+                      zfs: zfs)
   end
   desc "snapshot SUBCOMMAND ...ARGS", "manage snapshots"
   subcommand "snapshot", Snapshot
