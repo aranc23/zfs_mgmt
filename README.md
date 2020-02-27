@@ -37,7 +37,7 @@ The most common usage pattern would be to set zfs properties as explained below,
 
 
 ## Example output
-    [accx@a-lnx005:~/src/zfs_mgmt] (master)$ ruby -I lib bin/zfsmgr snapshot policy --filter pics                                                                 
+    [aranc23@beast:~/src/zfs_mgmt] (master)$ ruby -I lib bin/zfsmgr snapshot policy --filter pics                                                                 
     +------------------------------------------------------------+---------------------------+--------------------+------------+--------------+---------+--------+
     |                            snap                            |         creation          |       hourly       |   daily    |    weekly    | monthly | yearly |
     +------------------------------------------------------------+---------------------------+--------------------+------------+--------------+---------+--------+
@@ -62,7 +62,7 @@ The most common usage pattern would be to set zfs properties as explained below,
     | backup/beast/data/pics@20131108144154                      | 2013-11-08T14:41:57-06:00 |                    | 2013-11-08 | 2013 Week 44 | 2013-11 | 2013   |
     +------------------------------------------------------------+---------------------------+--------------------+------------+--------------+---------+--------+
 
-    [accx@beast:~/src/zfs_mgmt] (master)$ ruby -I lib bin/zfsmgr snapshot destroy --filter pics --noop
+    [aranc23@beast:~/src/zfs_mgmt] (master)$ ruby -I lib bin/zfsmgr snapshot destroy --filter pics --noop
     I, [2020-02-27T16:27:33.381645 #4914]  INFO -- : deleting 21 snapshots for backup/beast/data/pics
     I, [2020-02-27T16:27:33.381731 #4914]  INFO -- : zfs destroy -pn backup/beast/data/pics@autosnap_2020-02-19_21:00:05_hourly,autosnap_2020-02-19_22:00:05_hourly,autosnap_2020-02-19_23:00:01_hourly,autosnap_2020-02-20_00:00:05_daily,autosnap_2020-02-20_01:00:04_hourly,autosnap_2020-02-20_02:00:04_hourly,autosnap_2020-02-20_03:00:04_hourly,autosnap_2020-02-20_04:00:05_hourly,autosnap_2020-02-20_05:00:05_hourly,autosnap_2020-02-20_07:00:04_hourly,autosnap_2020-02-20_08:00:01_hourly,autosnap_2020-02-20_09:00:05_hourly,autosnap_2020-02-20_10:00:05_hourly,autosnap_2020-02-20_11:00:05_hourly,autosnap_2020-02-20_12:00:05_hourly,autosnap_2020-02-20_13:00:01_hourly,autosnap_2020-02-20_14:00:05_hourly,autosnap_2020-02-20_15:00:05_hourly,autosnap_2020-02-20_16:00:05_hourly,autosnap_2020-02-20_17:00:05_hourly,autosnap_2020-02-20_18:00:05_hourly
     destroy backup/beast/data/pics@autosnap_2020-02-19_21:00:05_hourly
