@@ -37,6 +37,15 @@ The most common usage pattern would be to set zfs properties as explained below,
 
 
 ## Example output
+    [aranc23@beast:~/src/zfs_mgmt] (master)$ zfs get all | egrep 'zfsmgmt.+local'
+    backup                      zfsmgmt:manage        true                                          local
+    backup                      zfsmgmt:policy        10y60m104w365d168h                            local
+    backup                      zfsmgmt:minage        7D                                            local
+    backup                      zfsmgmt:ignoresnaps   ^syncoid_                                     local
+    backup/beast/data/archive   zfsmgmt:policy        1h                                            local
+    backup/beast/data/archive   zfsmgmt:minage        1s                                            local
+    backup/beast/data/archive   zfsmgmt:matchsnaps    archive                                       local
+
     [aranc23@beast:~/src/zfs_mgmt] (master)$ ruby -I lib bin/zfsmgr snapshot policy --filter pics                                                                 
     +------------------------------------------------------------+---------------------------+--------------------+------------+--------------+---------+--------+
     |                            snap                            |         creation          |       hourly       |   daily    |    weekly    | monthly | yearly |
