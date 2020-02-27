@@ -15,6 +15,12 @@ $date_patterns = {
   'monthly' => '%Y-%m',
   'yearly' => '%Y',
 }
+
+$time_pattern_map = {}
+$date_patterns.keys.each do |tf|
+  $time_pattern_map[tf[0]] = tf
+end
+
 $time_specs = {
   's' => 1,
   'm' => 60,
@@ -46,7 +52,7 @@ module ZfsMgmt
       raise 'SpecParseError'
     end
     if md[2] and md[2].length > 0
-      return md[1].to_i * $time_specs[downcase(md[2])]
+      return md[1].to_i * $time_specs[md[2].downcase]
     else
       return md[1].to_i
     end
@@ -111,7 +117,7 @@ module ZfsMgmt
     newest_snapshot_name = sorted.shift
     
     counters = policy_parser(props['zfsmgmt:policy'])
-    $logger.debug("#{counters}")
+    $logger.debug(counters)
     saved = {}
 
     # set the counters variable to track the number of saved daily/hourly/etc. snapshots
@@ -250,21 +256,19 @@ module ZfsMgmt
       end
     end
   end
-
+  # parse a policy string into a hash of integers
   def self.policy_parser(str)
     res = {}
-    map = {}
     $date_patterns.keys.each do |tf|
       res[tf]=0
-      map[tf[0]] = tf
     end
-    p = str.scan(/\d+[#{map.keys.join('')}]/)
+    p = str.scan(/\d+[#{$time_pattern_map.keys.join('')}]/i)
     unless p.length > 0
       raise "unable to parse the policy configuration #{str}"
     end
     p.each do |pi|
-      scn = pi.scan(/(\d+)([#{map.keys.join('')}])/)
-      res[map[scn[0][1]]] = scn[0][0].to_i
+      scn = /(\d+)([#{$time_pattern_map.keys.join('')}])/i.match(pi)
+      res[$time_pattern_map[scn[2].downcase]] = scn[1].to_i
     end
     res
   end
