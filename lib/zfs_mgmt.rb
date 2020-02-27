@@ -5,6 +5,7 @@ require 'date'
 require 'logger'
 require 'text-table'
 require 'open3'
+require 'filesize'
 
 $logger = Logger.new(STDERR)
 
@@ -181,7 +182,7 @@ module ZfsMgmt
       unless props.has_key?('zfsmgmt:manage') and props['zfsmgmt:manage'] == 'true'
         next
       end
-      snaps = self.zfsget(properties: ['name','creation','userrefs'],types: ['snapshot'], fs: zfs)
+      snaps = self.zfsget(properties: ['name','creation','userrefs','used','written','referenced'],types: ['snapshot'], fs: zfs)
       if snaps.length == 0
         $logger.warn("unable to process this zfs, no snapshots at all: #{zfs}")
         next
@@ -207,10 +208,11 @@ module ZfsMgmt
 
       # print a table of saved snapshots with the reasons it is being saved
       table = Text::Table.new
-      table.head = ['snap','creation','hourly','daily','weekly','monthly','yearly']
+      table.head = ['snap','written','creation','hourly','daily','weekly','monthly','yearly']
       table.rows = []
       saved_snaps.sort { |a,b| snaps[b]['creation'] <=> snaps[a]['creation'] }.each do |snap|
-        table.rows << [snap,local_epoch_to_datetime(snaps[snap]['creation'])] + find_saved_reason(saved,snap)
+        snapwritten = Filesize.from("#{snaps[snap]['written']} B").pretty
+        table.rows << [snap,snapwritten,local_epoch_to_datetime(snaps[snap]['creation'])] + find_saved_reason(saved,snap)
       end
       print table.to_s
     end
