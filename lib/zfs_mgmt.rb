@@ -206,6 +206,10 @@ module ZfsMgmt
       # call the function that decides who to save and who to delete
       (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs,props,snaps)
 
+      if saved_snaps.length == 0
+        $logger.info("no snapshots marked as saved by policy for #{zfs}")
+        next
+      end
       # print a table of saved snapshots with the reasons it is being saved
       table = Text::Table.new
       table.head = ['snap','written','creation','hourly','daily','weekly','monthly','yearly']
