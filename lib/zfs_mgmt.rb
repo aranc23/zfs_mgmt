@@ -41,12 +41,12 @@ module ZfsMgmt
     end
   end
   def self.timespec_to_seconds(spec)
-    md = /^(\d+)([smhdw]?)/.match(spec)
+    md = /^(\d+)([smhdw]?)/i.match(spec)
     unless md.length == 3
       raise 'SpecParseError'
     end
     if md[2] and md[2].length > 0
-      return md[1].to_i * $time_specs[md[2]]
+      return md[1].to_i * $time_specs[downcase(md[2])]
     else
       return md[1].to_i
     end
