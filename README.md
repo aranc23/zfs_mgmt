@@ -16,22 +16,22 @@ Therefore, building the gem and installing, or running ruby inside the src/ dire
 
 ## Usage
 
-Commands:
-  zfsmgr help [COMMAND]               # Describe available commands or one specific command
-  zfsmgr snapshot SUBCOMMAND ...ARGS  # manage snapshots
-  zfsmgr zfsget [ZFS]                 # execute zfs get for the given properties and types and parse the output into a nested hash
-
-
-  zfsmgr snapshot destroy         # apply the snapshot destroy policy to zfs
-  zfsmgr snapshot help [COMMAND]  # Describe subcommands or one specific subcommand
-  zfsmgr snapshot policy          # print the policy table for zfs
-
-Options:
-  [--noop], [--no-noop]        # pass -n option to zfs commands
-  [--verbose], [--no-verbose]  # pass -v option to zfs commands
-  [--debug], [--no-debug]      # set logging level to debug
-  [--filter=FILTER]            # only act on zfs matching this regexp
-                               # Default: .+
+    Commands:
+      zfsmgr help [COMMAND]               # Describe available commands or one specific command
+      zfsmgr snapshot SUBCOMMAND ...ARGS  # manage snapshots
+      zfsmgr zfsget [ZFS]                 # execute zfs get for the given properties and types and parse the output into a nested hash
+    
+    
+      zfsmgr snapshot destroy         # apply the snapshot destroy policy to zfs
+      zfsmgr snapshot help [COMMAND]  # Describe subcommands or one specific subcommand
+      zfsmgr snapshot policy          # print the policy table for zfs
+    
+    Options:
+      [--noop], [--no-noop]        # pass -n option to zfs commands
+      [--verbose], [--no-verbose]  # pass -v option to zfs commands
+      [--debug], [--no-debug]      # set logging level to debug
+      [--filter=FILTER]            # only act on zfs matching this regexp
+                                   # Default: .+
 
 
 
@@ -47,7 +47,7 @@ Bug reports and pull requests are welcome on GitHub at https://github.com/aranc2
 
 ## zfs user properties
 
-Destruction of zfs snapshots is based on the collowing zfs user properties:
+Destruction of zfs snapshots is based on the following zfs user properties:
 
 ### zfsmgmt:manage
 manage snapshots for this filesystem if this property is 'true' (string literal)
@@ -99,16 +99,7 @@ to match the specified policy for the zfs, nor will they be deleted.
 The intended use is match zfs send/recv snapshots or hand-created
 snapshots, etc.  ie: ^syncoid_
 
-
-## Philosophy of Operation
-
-### Timestamps in snapshot names and logging
-Timestamps should use localtime. If the user wants gmt/utc they should
-set the system time apropriately.  (zfs uses local time in the
-creation property so using anything else just creates apparent
-mismatches.)
-
-### Snapshot Management / zfs destroy
+## Snapshot Management / zfs destroy
 When destroying snapshots according to a given policy, all snapshots
 should be considered for deletion and all snapshots should be
 considered as potentially satisfying the retention policy regardless
