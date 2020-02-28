@@ -24,6 +24,7 @@ The most common usage pattern would be to set zfs properties as explained below,
       zfsmgr zfsget [ZFS]                 # execute zfs get for the given properties and types and parse the output into a nested hash
     
     
+      zfsmgr snapshot create          # execute zfs snapshot based on zfs properties
       zfsmgr snapshot destroy         # apply the snapshot destroy policy to zfs
       zfsmgr snapshot help [COMMAND]  # Describe subcommands or one specific subcommand
       zfsmgr snapshot policy          # print the policy table for zfs
@@ -163,6 +164,19 @@ Ignore snapshots matching this regexp pattern.  They are neither used
 to match the specified policy for the zfs, nor will they be deleted.
 The intended use is match zfs send/recv snapshots or hand-created
 snapshots, etc.  ie: ^syncoid_
+
+### zfsmgmt:snapshot
+If this property is 'true' then create a snapshot in the format of
+zfsmgmt-%FT%T%z.  If this property is 'recursive' then create a
+recursive snapshot of this zfs.
+
+### zfsmgmt:snap_prefix
+Change the zfsmgmt portion of created snapshots, ie: 'autosnap' would
+create snapshots called autosnap-%FT%T%z.
+
+### zfsmgmt:snap_timestamp
+strftime format string used when creating snapshot names, default
+being %FT%T%z.
 
 ## Snapshot Management / zfs destroy
 When destroying snapshots according to a given policy, all snapshots

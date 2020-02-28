@@ -18,6 +18,10 @@ class Snapshot < Thor
   def policy()
     ZfsMgmt.snapshot_policy(verbopt: options[:verbose], debugopt: options[:debug], filter: options[:filter])
   end
+  desc "create", "execute zfs snapshot based on zfs properties"
+  def create()
+    ZfsMgmt.snapshot_create(verbopt: options[:verbose], debugopt: options[:debug], filter: options[:filter])
+  end
 end
 
 class ZfsMgr < Thor

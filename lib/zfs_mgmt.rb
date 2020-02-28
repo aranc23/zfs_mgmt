@@ -43,6 +43,9 @@ module ZfsMgmt
       'minage',
       'matchsnaps',
       'ignoresnaps',
+      'snapshot',
+      'snap_prefix',
+      'snap_timestamp',
     ].map do |p|
       ['zfsmgmt',p].join(':')
     end
@@ -276,5 +279,28 @@ module ZfsMgmt
       res[$time_pattern_map[scn[2].downcase]] = scn[1].to_i
     end
     res
+  end
+  def self.snapshot_create(noop: false, verbopt: false, debugopt: false, filter: '.+')
+    if debugopt
+      $logger.level = Logger::DEBUG
+    else
+      $logger.level = Logger::INFO
+    end
+    dt = DateTime.now
+    zfsget(properties: custom_properties()).each do |zfs,props|
+      if props.has_key?('zfsmgmt:snapshot')
+        prefix = ( props.has_key?('zfsmgmt:snap_prefix') ? props['zfsmgmt:snap_prefix'] : 'zfsmgmt' )
+        ts = ( props.has_key?('zfsmgmt:snap_timestamp') ? props['zfsmgmt:snap_timestamp'] : '%FT%T%z' )
+        if props['zfsmgmt:snapshot'] == 'true' or props['zfsmgmt:snapshot'] == 'recursive'
+          com = ['zfs','snapshot']
+          if props['zfsmgmt:snapshot'] == 'recursive'
+            com.append('-r')
+          end
+          com.append("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
+          $logger.info(com)
+          system(com.join(' '))
+        end
+      end
+    end
   end
 end
