@@ -288,18 +288,17 @@ module ZfsMgmt
     end
     dt = DateTime.now
     zfsget(properties: custom_properties()).each do |zfs,props|
-      if props.has_key?('zfsmgmt:snapshot')
-        if props['zfsmgmt:snapshot'] == 'true' or ( props['zfsmgmt:snapshot'] == 'recursive' and props['zfsmgmt:snapshot@source'] == 'local' )
-          prefix = ( props.has_key?('zfsmgmt:snap_prefix') ? props['zfsmgmt:snap_prefix'] : 'zfsmgmt' )
-          ts = ( props.has_key?('zfsmgmt:snap_timestamp') ? props['zfsmgmt:snap_timestamp'] : '%FT%T%z' )
-          com = ['zfs','snapshot']
-          if props['zfsmgmt:snapshot'] == 'recursive' and props['zfsmgmt:snapshot@source'] == 'local'
-            com.append('-r')
-          end
-          com.append("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
-          $logger.info(com)
-          system(com.join(' '))
+      # zfs must have snapshot set to true or recursive
+      if props.has_key?('zfsmgmt:snapshot') and props['zfsmgmt:snapshot'] == 'true' or ( props['zfsmgmt:snapshot'] == 'recursive' and props['zfsmgmt:snapshot@source'] == 'local' )
+        prefix = ( props.has_key?('zfsmgmt:snap_prefix') ? props['zfsmgmt:snap_prefix'] : 'zfsmgmt' )
+        ts = ( props.has_key?('zfsmgmt:snap_timestamp') ? props['zfsmgmt:snap_timestamp'] : '%FT%T%z' )
+        com = ['zfs','snapshot']
+        if props['zfsmgmt:snapshot'] == 'recursive' and props['zfsmgmt:snapshot@source'] == 'local'
+          com.append('-r')
         end
+        com.append("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
+        $logger.info(com)
+        system(com.join(' '))
       end
     end
   end
