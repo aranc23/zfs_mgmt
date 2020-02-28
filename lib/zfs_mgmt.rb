@@ -294,9 +294,9 @@ module ZfsMgmt
         ts = ( props.has_key?('zfsmgmt:snap_timestamp') ? props['zfsmgmt:snap_timestamp'] : '%FT%T%z' )
         com = ['zfs','snapshot']
         if props['zfsmgmt:snapshot'] == 'recursive' and props['zfsmgmt:snapshot@source'] == 'local'
-          com.append('-r')
+          com.push('-r')
         end
-        com.append("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
+        com.push("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
         $logger.info(com)
         system(com.join(' '))
       end
