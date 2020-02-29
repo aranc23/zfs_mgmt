@@ -116,6 +116,10 @@ module ZfsMgmt
     if props.has_key?('zfsmgmt:minage')
       minage = timespec_to_seconds(props['zfsmgmt:minage'])
     end
+    strategy = 'youngest'
+    if props.has_key?('zfsmgmt:strategy') and props['zfsmgmt:strategy'] == 'oldest'
+      strategy = 'oldest'
+    end
     sorted = snaps.keys.sort { |a,b| snaps[b]['creation'] <=> snaps[a]['creation'] }
     # never consider the latest snapshot for anything
     newest_snapshot_name = sorted.shift
@@ -141,7 +145,7 @@ module ZfsMgmt
       snaptime = local_epoch_to_datetime(snaps[snap_name]['creation'])
       $date_patterns.each do |d,p|
         pat = snaptime.strftime(p)
-        if saved[d].has_key?(pat)
+        if saved[d].has_key?(pat) and strategy == 'youngest'
           # update the existing current save snapshot for this timeframe
           $logger.debug("updating the saved snapshot for \"#{pat}\" to #{snap_name} at #{snaptime}")
           saved[d][pat] = snap_name
