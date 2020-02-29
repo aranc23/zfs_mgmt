@@ -40,6 +40,7 @@ module ZfsMgmt
     return [
       'policy',
       'manage',
+      'strategy',
       'minage',
       'matchsnaps',
       'ignoresnaps',
