@@ -146,10 +146,14 @@ module ZfsMgmt
       snaptime = local_epoch_to_datetime(snaps[snap_name]['creation'])
       $date_patterns.each do |d,p|
         pat = snaptime.strftime(p)
-        if saved[d].has_key?(pat) and strategy == 'youngest'
-          # update the existing current save snapshot for this timeframe
-          $logger.debug("updating the saved snapshot for \"#{pat}\" to #{snap_name} at #{snaptime}")
-          saved[d][pat] = snap_name
+        if saved[d].has_key?(pat)
+          if strategy == 'youngest'
+            # update the existing current save snapshot for this timeframe
+            $logger.debug("updating the saved snapshot for \"#{pat}\" to #{snap_name} at #{snaptime}")
+            saved[d][pat] = snap_name
+          else
+            $logger.debug("not updating the saved snapshot for \"#{pat}\" to #{snap_name} at #{snaptime}, we have an older snap")
+          end
         elsif counters[d] > 0
           # new pattern, and we want to save more snaps of this type
           $logger.debug("new pattern \"#{pat}\" n#{counters[d]} #{d} snapshot, saving #{snap_name} at #{snaptime}")
