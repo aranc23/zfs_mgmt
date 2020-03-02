@@ -6,6 +6,7 @@ require "zfs_mgmt/version"
 Gem::Specification.new do |spec|
   spec.name          = "zfs_mgmt"
   spec.version       = ZfsMgmt::VERSION
+  spec.licenses      = ['GPL-3.0-or-later']
   spec.authors       = ["Aran Cox"]
   spec.email         = ["arancox@gmail.com"]
 
