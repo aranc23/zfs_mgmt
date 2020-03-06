@@ -173,7 +173,7 @@ module ZfsMgmt
     # delete everything not in the list of saved snapshots
     deleteme = sorted - saved_snaps
     deleteme = deleteme.select { |snap|
-      if props.has_key?('zfsmgmt:ignoresnaps') and /#{props['zfsmgmt:ignoresnaps']}/ =~ snap
+      if props.has_key?('zfsmgmt:ignoresnaps') and /#{props['zfsmgmt:ignoresnaps']}/ =~ snap.split('@')[1]
         $logger.debug("skipping #{snap} because it matches ignoresnaps pattern: #{props['zfsmgmt:ignoresnaps']}")
         false
       elsif minage > 0 and Time.at(snaps[snap]['creation'] + minage) > Time.now()
