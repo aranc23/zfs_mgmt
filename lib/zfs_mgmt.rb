@@ -44,6 +44,7 @@ module ZfsMgmt
       'minage',
       'matchsnaps',
       'ignoresnaps',
+      'prefersnaps',
       'snapshot',
       'snap_prefix',
       'snap_timestamp',
@@ -117,13 +118,11 @@ module ZfsMgmt
     if props.has_key?('zfsmgmt:minage')
       minage = timespec_to_seconds(props['zfsmgmt:minage'])
     end
-    strategy = 'youngest'
-    if props.has_key?('zfsmgmt:strategy') and props['zfsmgmt:strategy'] == 'oldest'
-      strategy = 'oldest'
+    strategy = 'oldest'
+    if props.has_key?('zfsmgmt:strategy') and props['zfsmgmt:strategy'] == 'youngest'
+      strategy = 'youngest'
     end
     sorted = snaps.keys.sort { |a,b| snaps[b]['creation'] <=> snaps[a]['creation'] }
-    # never consider the latest snapshot for anything
-    newest_snapshot_name = sorted.shift
     
     counters = policy_parser(props['zfsmgmt:policy'])
     $logger.debug(counters)
@@ -147,12 +146,16 @@ module ZfsMgmt
       $date_patterns.each do |d,p|
         pat = snaptime.strftime(p)
         if saved[d].has_key?(pat)
-          if strategy == 'youngest'
+          #pp props['zfsmgmt:prefersnaps'],snap_name.split('@')[1], saved[d][pat].split('@')[1]
+          if props.has_key?('zfsmgmt:prefersnaps') and /#{props['zfsmgmt:prefersnaps']}/ !~ saved[d][pat].split('@')[1] and /#{props['zfsmgmt:prefersnaps']}/ =~ snap_name.split('@')[1]
+            $logger.debug("updating the saved snapshot, we prefer this one: \"#{pat}\" to #{snap_name} at #{snaptime}")
+            saved[d][pat] = snap_name
+          elsif strategy == 'oldest' and ( not props.has_key?('zfsmgmt:prefersnaps') or /#{props['zfsmgmt:prefersnaps']}/ =~ snap_name.split('@')[1] )
             # update the existing current save snapshot for this timeframe
             $logger.debug("updating the saved snapshot for \"#{pat}\" to #{snap_name} at #{snaptime}")
             saved[d][pat] = snap_name
           else
-            $logger.debug("not updating the saved snapshot for \"#{pat}\" to #{snap_name} at #{snaptime}, we have an older snap")
+            $logger.debug("not updating the saved snapshot for \"#{pat}\" to #{snap_name} at #{snaptime}, we have a younger snap")
           end
         elsif counters[d] > 0
           # new pattern, and we want to save more snaps of this type
@@ -178,6 +181,9 @@ module ZfsMgmt
         false
       elsif minage > 0 and Time.at(snaps[snap]['creation'] + minage) > Time.now()
         $logger.debug("skipping due to minage: #{snap} #{local_epoch_to_datetime(snaps[snap]['creation']).strftime('%F %T')}")
+        false
+      elsif snap == sorted[0] # the very newest snap
+        $logger.debug("skipping due to newest: #{snap} #{local_epoch_to_datetime(snaps[snap]['creation']).strftime('%F %T')}")
         false
       else
         true
