@@ -165,6 +165,18 @@ to match the specified policy for the zfs, nor will they be deleted.
 The intended use is match zfs send/recv snapshots or hand-created
 snapshots, etc.  ie: ^syncoid_
 
+### zfsmgmt:prefersnaps
+Prefer snapshots matching this regexp pattern.  The oldest/youngest
+snapshot matching this pattern will be used depending on strategy, but
+if no snapshots are found matching this pattern use any snapshot as
+constrained by the matchsnaps and ignoresnaps options (if set.)
+
+### zfsmgmt:strategy (default: oldest)
+Save the oldest snapshot fitting a given time frame as specificed by
+the policy, unless this value is set to "youngest" in which case use
+the most recent snapshot for any given time frame.  The default is
+oldest and unless the property is set to youngest oldest will be used.
+
 ### zfsmgmt:snapshot
 If this property is 'true' then create a snapshot in the format of
 zfsmgmt-%FT%T%z.  If this property is 'recursive' then create a
