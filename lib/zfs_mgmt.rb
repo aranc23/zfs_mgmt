@@ -251,6 +251,9 @@ module ZfsMgmt
     
       $logger.info("deleting #{deleteme.length} snapshots for #{zfs}")
       com_base = "zfs destroy -p"
+      if deleteme.length > 0
+        com_base = "#{com_base}d"
+      end
       if noop
         com_base = "#{com_base}n"
       end
