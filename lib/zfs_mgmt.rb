@@ -263,23 +263,26 @@ module ZfsMgmt
       deleteme.reverse! # oldest first for removal
       deleteme.each do |snap_name|
         $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
+        com = "#{com_base} #{zfs}@#{snap_name}"
+        $logger.info(com)
+        system(com)
       end
-      while deleteme.length > 0
-        for i in 0..(deleteme.length - 1) do
-          max = deleteme.length - 1 - i
-          $logger.debug("attempting to remove snaps 0 through #{max} out of #{deleteme.length} snapshots")
-          bigarg = "#{zfs}@#{deleteme[0..max].map { |s| s.split('@')[1] }.join(',')}"
-          com = "#{com_base} #{bigarg}"
-          $logger.debug("size of bigarg: #{bigarg.length} size of com: #{com.length}")
-          if bigarg.length >= 131072 or com.length >= (2097152-10000)
-            next
-          end
-          $logger.info(com)
-          deleteme = deleteme - deleteme[0..max]
-          system(com)
-          break
-        end
-      end
+      # while deleteme.length > 0
+      #   for i in 0..(deleteme.length - 1) do
+      #     max = deleteme.length - 1 - i
+      #     $logger.debug("attempting to remove snaps 0 through #{max} out of #{deleteme.length} snapshots")
+      #     bigarg = "#{zfs}@#{deleteme[0..max].map { |s| s.split('@')[1] }.join(',')}"
+      #     com = "#{com_base} #{bigarg}"
+      #     $logger.debug("size of bigarg: #{bigarg.length} size of com: #{com.length}")
+      #     if bigarg.length >= 131072 or com.length >= (2097152-10000)
+      #       next
+      #     end
+      #     $logger.info(com)
+      #     deleteme = deleteme - deleteme[0..max]
+      #     system(com)
+      #     break
+      #   end
+      # end
     end
   end
   # parse a policy string into a hash of integers
