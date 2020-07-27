@@ -263,7 +263,7 @@ module ZfsMgmt
       deleteme.reverse! # oldest first for removal
       deleteme.each do |snap_name|
         $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
-        com = "#{com_base} #{zfs}@#{snap_name}"
+        com = "#{com_base} #{snap_name}"
         $logger.info(com)
         system(com)
       end
