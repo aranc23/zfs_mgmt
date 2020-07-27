@@ -308,8 +308,7 @@ module ZfsMgmt
           deleteme = deleteme - deleteme[0..max]
           system(com)
           if $?.exitstatus != 0
-            $logger.error("giving up on command with non-zero status #{$?.exitstatus}")
-            exit $?.exitstatus
+            $logger.error("zfs exited with non-zero status: #{$?.exitstatus}")
           end
           break
         end
