@@ -251,39 +251,10 @@ module ZfsMgmt
     
       $logger.info("deleting #{deleteme.length} snapshots for #{zfs}")
       deleteme.reverse! # oldest first for removal
+      deleteme.each do |snap_name|
+        $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
+      end
 
-      # holdme = deleteme
-      # holds = []
-      # while holdme.length > 0
-      #   for i in 0..(holdme.length - 1) do
-      #     max = holdme.length - 1 - i
-      #     bigarg = holdme[0..max].join(" ") # snaps joined by 
-      #     com = "zfs holds -H #{bigarg}"
-      #     $logger.debug("size of bigarg: #{bigarg.length} size of com: #{com.length}")
-      #     if bigarg.length >= 131072 or com.length >= (2097152-10000)
-      #       next
-      #     end
-      #     $logger.info(com)
-      #     so,se,status = Open3.capture3(com)
-      #     if status.signaled?
-      #       $logger.error("process was signalled \"#{com}\", termsig #{status.termsig}")
-      #       raise 'ZfsHoldsError'
-      #     end
-      #     unless status.success?
-      #       $logger.error("failed to execute \"#{com}\", exit status #{status.exitstatus}")
-      #       so.split("\n").each { |l| $logger.debug("stdout: #{l}") }
-      #       se.split("\n").each { |l| $logger.error("stderr: #{l}") }
-      #       raise 'ZfsHoldsError'
-      #     end
-      #     so.split("\n").each do |line|
-      #       holds.append(line.split("\t")[0])
-      #     end
-      #     holdme = holdme - holdme[0..max]
-      #     break
-      #   end
-      # end
-      # $logger.debug("found #{holds.length} snapshots with holds: #{holds.join(',')}")
-      # deleteme = deleteme - holds
       com_base = "zfs destroy -p"
       if deleteme.length > 0
         com_base = "#{com_base}d"
