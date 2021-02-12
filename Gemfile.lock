@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    zfs_mgmt (0.3.1)
+    zfs_mgmt (0.3.4)
 
 GEM
   remote: https://rubygems.org/
