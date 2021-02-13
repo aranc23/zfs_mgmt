@@ -1,5 +1,6 @@
 # coding: utf-8
 require "zfs_mgmt/version"
+require "zfs_mgmt/restic"
 require 'pp'
 require 'date'
 require 'logger'
@@ -325,7 +326,7 @@ module ZfsMgmt
     end
   end
 end
-class ZfsMgrList < Thor
+class ZfsMgmtList < Thor
   class_option :filter, :type => :string, :default => '.+',
                :desc => 'only act on zfs matching this regexp'
   desc "stale", "list all zfs with stale snapshots"
@@ -340,7 +341,7 @@ class ZfsMgrList < Thor
       last = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }.last
       snap_time = Time.at(snaps[last]['creation'])
       if snap_time < cutoff
-        table.rows << [zfs,last,snap_time]
+        table.rows << [zfs,last.split('@')[1],snap_time]
       end
     end
     if table.rows.count > 0

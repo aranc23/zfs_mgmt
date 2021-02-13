@@ -36,7 +36,9 @@ class ZfsMgr < Thor
   desc "snapshot SUBCOMMAND ...ARGS", "manage snapshots"
   subcommand "snapshot", Snapshot
   desc "list SUBCOMMAND ...ARGS", "list filesystems"
-  subcommand "list", ZfsMgrList
+  subcommand "list", ZfsMgmtList
+  desc "restic SUBCOMMAND ...ARGS", "backup zfs to restic"
+  subcommand "restic", ZfsMgmtRestic
 end
 
 ZfsMgr.start(ARGV)
