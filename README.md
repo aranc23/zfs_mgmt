@@ -180,7 +180,11 @@ oldest and unless the property is set to youngest oldest will be used.
 ### zfsmgmt:snapshot
 If this property is 'true' then create a snapshot in the format of
 zfsmgmt-%FT%T%z.  If this property is 'recursive' then create a
-recursive snapshot of this zfs.
+recursive snapshot of this zfs, but only on zfs where this property is
+local.  If this property is set to the string 'local' and the property
+is set locally, it will create a snapshot.  The intention is that you
+would use 'local' when you want a zfs snapshot for the filesystem, but
+NOT it's descendant filesystems.
 
 ### zfsmgmt:snap_prefix
 Change the zfsmgmt portion of created snapshots, ie: 'autosnap' would
