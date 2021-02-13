@@ -211,10 +211,6 @@ module ZfsMgmt
         $logger.warn("unable to process this zfs, no snapshots at all: #{zfs}")
         next
       end
-      unless props.has_key?('zfsmgmt:policy') and policy = policy_parser(props['zfsmgmt:policy'])
-        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
-        next # zfs
-      end
       zfss.push([zfs,props,snaps])
     end
     return zfss
@@ -227,6 +223,10 @@ module ZfsMgmt
     end
     zfs_managed_list(filter: filter).each do |zdata|
       (zfs,props,snaps) = zdata
+      unless props.has_key?('zfsmgmt:policy') and policy_parser(props['zfsmgmt:policy'])
+        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
+        next # zfs
+      end
       # call the function that decides who to save and who to delete
       (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs,props,snaps)
 
@@ -252,6 +252,11 @@ module ZfsMgmt
     end
     zfs_managed_list(filter: filter).each do |zdata|
       (zfs,props,snaps) = zdata
+      unless props.has_key?('zfsmgmt:policy') and policy_parser(props['zfsmgmt:policy'])
+        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
+        next # zfs
+      end
+
       # call the function that decides who to save and who to delete
       (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs,props,snaps)
     
