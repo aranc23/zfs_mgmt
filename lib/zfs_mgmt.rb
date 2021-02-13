@@ -192,15 +192,20 @@ module ZfsMgmt
     }
     return saved,saved_snaps,deleteme
   end
-  def self.zfs_managed_list(filter: '.+')
+  def self.zfs_managed_list(filter: '.+', properties: custom_properties(), property_match: { 'zfsmgmt:manage' => 'true' } )
     zfss = [] # array of arrays
-    zfsget(properties: custom_properties()).each do |zfs,props|
+    zfsget(properties: properties).each do |zfs,props|
       unless /#{filter}/ =~ zfs
         next
       end
-      unless props.has_key?('zfsmgmt:manage') and props['zfsmgmt:manage'] == 'true'
-        next
+      managed = true
+      property_match.each do |k,v|
+        unless props.has_key?(k) and props[k] == v
+          managed = false
+          break
+        end
       end
+      next unless managed
       snaps = self.zfsget(properties: ['name','creation','userrefs','used','written','referenced'],types: ['snapshot'], zfs: zfs)
       if snaps.length == 0
         $logger.warn("unable to process this zfs, no snapshots at all: #{zfs}")
