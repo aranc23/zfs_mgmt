@@ -104,11 +104,16 @@ module ZfsMgmt::Restic
                "zfsmgmt:level=#{level}" ]
       com = [ options[:zfs_binary], 'send', '-L', '-w', '-h', '-p' ]
       if level > 0
-        com.push('-i',zfs_snap_parent)
+        if options[:intermediary]
+          com.push('-I')
+        else
+          com.push('-i')
+        end
+        com.push(zfs_snap_parent)
         tags.push("zfsmgmt:parent=#{zfs_snap_parent}")
       end
       com.push( last_zfs_snapshot )
-      com.push( '|', 'mbuffer', '-m', '256m', '-q' )
+      com.push( '|', 'mbuffer', '-m', options[:buffer], '-q' )
       com.push( '|', options[:restic_binary], 'backup', '--stdin',
                 '--stdin-filename', zfs, '--time', "\"#{zfs_snap_time.strftime('%F %T')}\"" )
       tags.each do |tag|
@@ -116,6 +121,11 @@ module ZfsMgmt::Restic
       end
       if props.has_key?('zfsmgmt:restic_repository')
         com.push( '-r', props['zfsmgmt:restic_repository'] )
+      end
+      if options[:verbose]
+        com.push('--verbose',options[:verbose])
+      elsif $stdout.isatty
+        com.push('-v')
       end
       unless ZfsMgmt.zfs_holds(last_zfs_snapshot).include?('zfsmgmt_restic')
         ZfsMgmt.zfs_hold('zfsmgmt_restic',last_zfs_snapshot)
