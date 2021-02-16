@@ -117,8 +117,22 @@ module ZfsMgmt::Restic
       if props.has_key?('zfsmgmt:restic_repository')
         com.push( '-r', props['zfsmgmt:restic_repository'] )
       end
-      print "#{com.join(' ')}\n"
+      unless ZfsMgmt.zfs_holds(last_zfs_snapshot).include?('zfsmgmt_restic')
+        ZfsMgmt.zfs_hold('zfsmgmt_restic',last_zfs_snapshot)
+      end
+      $logger.info("#{com.join(' ')}")
       system(com.join(' '))
+      chain_snaps = chain.map do |rsnap|
+        rsnap['zfsmgmt:snapshot']
+      end
+      zfs_snapshots.each do |s,d|
+        d['userrefs'] == 0 and next
+        chain_snaps.include?(s) and next
+        s == last_zfs_snapshot and next
+        if ZfsMgmt.zfs_holds(s).include?('zfsmgmt_restic')
+          ZfsMgmt.zfs_release('zfsmgmt_restic',s)
+        end
+      end
     end
   end
 end
