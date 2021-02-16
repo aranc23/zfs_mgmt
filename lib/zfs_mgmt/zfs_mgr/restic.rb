@@ -1,5 +1,5 @@
 
-class ZfsMgmt::ZfsMgr::ResticBackup < Thor
+class ZfsMgmt::ZfsMgr::Backup < Thor
   include ZfsMgmt::Restic
   class_option :filter, :type => :string, :default => '.+',
                :desc => 'only act on zfs matching this regexp'
@@ -23,6 +23,6 @@ class ZfsMgmt::ZfsMgr::ResticBackup < Thor
 end
 
 class ZfsMgmt::ZfsMgr::Restic < Thor
-  desc "restic SUBCOMMAND ...ARGS", "backup all configured zfs to restic"
-  subcommand "backup", ZfsMgmt::ZfsMgr::ResticBackup
+  desc "backup SUBCOMMAND ...ARGS", "backup all configured zfs to restic"
+  subcommand "backup", ZfsMgmt::ZfsMgr::Backup
 end
