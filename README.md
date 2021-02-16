@@ -1,8 +1,11 @@
 # ZfsMgmt
 
-zfs_mgmt aims to provide some useful helpers for managing zfs snapshots, and eventually send/recv duties via the zfsmgr script in bin/.
+zfs_mgmt aims to provide some useful helpers for managing zfs
+snapshots, and eventually send/recv duties via the zfsmgr script in
+bin/.
 
-Currently only snapshot destruction is implemented by a policy specification stored in zfs properties.
+Currently only snapshot destruction is implemented by a policy
+specification stored in zfs properties.
 
 ## Installation
 
@@ -16,7 +19,11 @@ Therefore, building the gem and installing, or running ruby inside the src/ dire
 
 ## Usage
 
-The most common usage pattern would be to set zfs properties as explained below, then use **zfsmgr snapshot policy** to print a table of what would be kept and for what reason.  Then use **zfsmgr snapshot destroy --noop** to see what would be destroyed, and finally **zfsmgr snapshot destroy** without the --noop option to actually remove snapshots.
+The most common usage pattern would be to set zfs properties as
+explained below, then use **zfsmgr snapshot policy** to print a table
+of what would be kept and for what reason.  Then use **zfsmgr snapshot destroy --noop**
+to see what would be destroyed, and finally **zfsmgr snapshot destroy**
+without the --noop option to actually remove snapshots.
 
     Commands:
       zfsmgr help [COMMAND]               # Describe available commands or one specific command
@@ -100,20 +107,30 @@ The most common usage pattern would be to set zfs properties as explained below,
 
 ## Development
 
-After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
+After checking out the repo, run `bin/setup` to install
+dependencies. Then, run `rake spec` to run the tests. You can also run
+`bin/console` for an interactive prompt that will allow you to
+experiment.
 
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and tags, and push the `.gem` file to [rubygems.org](https://rubygems.org).
+To install this gem onto your local machine, run `bundle exec rake
+install`. To release a new version, update the version number in
+`version.rb`, and then run `bundle exec rake release`, which will
+create a git tag for the version, push git commits and tags, and push
+the `.gem` file to [rubygems.org](https://rubygems.org).
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/aranc23/zfs_mgmt.
+Bug reports and pull requests are welcome on GitHub at
+https://github.com/aranc23/zfs_mgmt.
 
 ## zfs user properties
 
-Destruction of zfs snapshots is based on the following zfs user properties:
+Destruction of zfs snapshots is based on the following zfs user
+properties:
 
 ### zfsmgmt:manage
-manage snapshots for this filesystem if this property is 'true' (string literal)
+manage snapshots for this filesystem if this property is 'true'
+(string literal)
  
 ### zfsmgmt:policy
 
@@ -127,7 +144,8 @@ Examples:
 - 1y1m1y1d1h (1 of each time frame worth of snapshots)
 - 72h (72 hourly snapshots)
 
-The order in which each timeframe is listed in does not matter, and the supported specs are as follows:
+The order in which each timeframe is listed in does not matter, and
+the supported specs are as follows:
 
 - h - hourly
 - d - daily
