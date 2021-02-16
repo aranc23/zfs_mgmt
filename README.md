@@ -25,23 +25,30 @@ of what would be kept and for what reason.  Then use **zfsmgr snapshot destroy -
 to see what would be destroyed, and finally **zfsmgr snapshot destroy**
 without the --noop option to actually remove snapshots.
 
+    $ zfsmgr
     Commands:
       zfsmgr help [COMMAND]               # Describe available commands or one specific command
+      zfsmgr list SUBCOMMAND ...ARGS      # list filesystems
+      zfsmgr restic SUBCOMMAND ...ARGS    # backup zfs to restic
       zfsmgr snapshot SUBCOMMAND ...ARGS  # manage snapshots
       zfsmgr zfsget [ZFS]                 # execute zfs get for the given properties and types and parse the output into a nested hash
-    
-    
-      zfsmgr snapshot create          # execute zfs snapshot based on zfs properties
-      zfsmgr snapshot destroy         # apply the snapshot destroy policy to zfs
-      zfsmgr snapshot help [COMMAND]  # Describe subcommands or one specific subcommand
-      zfsmgr snapshot policy          # print the policy table for zfs
-    
-    Options:
-      [--noop], [--no-noop]        # pass -n option to zfs commands
-      [--verbose], [--no-verbose]  # pass -v option to zfs commands
-      [--debug], [--no-debug]      # set logging level to debug
-      [--filter=FILTER]            # only act on zfs matching this regexp
-                                   # Default: .+
+
+### list stale
+
+**zfsmgr list stale will** will list all zfs with "stale" snapshots,
+that is the newest snapshot is older than 1d or older than the --age
+parameter.
+
+### restic backup
+
+zfsmgr can pipe zfs send output into restic, to allow storing zfs
+streams in restic repositories.  zfsmgr takes an opinionated approach
+to this task, implementing a traditional full/differential/incremental
+backup scheme.  This should allow a recent snapshot to be restored
+requiring only 3 restic snapshots to recreate the filesystem. See the
+properties section for restic related zfs properties.
+
+    $ zfsmgr restic backup full
 
 
 ## Example output
@@ -211,6 +218,13 @@ create snapshots called autosnap-%FT%T%z.
 ### zfsmgmt:snap_timestamp
 strftime format string used when creating snapshot names, default
 being %FT%T%z.
+
+### zfsmgmt:restic_backup
+boolean, send this zfs to restic
+
+### zfsmgmt:restic_repository
+send the zfs to this repository, optional, rely on restic environment
+variables otherwise
 
 ## Snapshot Management / zfs destroy
 When destroying snapshots according to a given policy, all snapshots
