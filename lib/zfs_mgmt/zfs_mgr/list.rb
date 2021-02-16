@@ -22,8 +22,4 @@ class ZfsMgmt::ZfsMgr::List < Thor
       print table.to_s
     end
   end
-  desc "backup", "conflict backup"
-  def backup()
-    pp "tst"
-  end
 end
