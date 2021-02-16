@@ -64,7 +64,45 @@ module ZfsMgmt
       return md[1].to_i
     end
   end
-      
+
+  def self.zfs_holds(snapshot)
+    com = ['zfs', 'holds', '-H', snapshot]
+    $logger.debug("#{com.join(' ')}")
+    out = %x(#{com.join(' ')})
+    unless $?.success?
+      errstr = "unable to retrieves holds for snapshot: #{snapshot}"
+      $logger.error(errstr)
+      raise errstr
+    end
+    a = []
+    out.split("\n").each do |ln|
+      a.push(ln.split("\t")[1])
+    end
+    a
+  end
+
+  def self.zfs_hold(hold,snapshot)
+    com = ['zfs', 'hold', hold, snapshot]
+    $logger.debug("#{com.join(' ')}")
+    system(com.join(' '))
+    unless $?.success?
+      errstr = "unable to set hold: #{hold} for snapshot: #{snapshot}"
+      $logger.error(errstr)
+      raise errstr
+    end
+  end
+
+  def self.zfs_release(hold,snapshot)
+    com = ['zfs', 'release', hold, snapshot]
+    $logger.debug("#{com.join(' ')}")
+    system(com.join(' '))
+    unless $?.success?
+      errstr = "unable to release hold: #{hold} for snapshot: #{snapshot}"
+      $logger.error(errstr)
+      raise errstr
+    end
+  end
+
   def self.zfsget(properties: ['name'],types: ['filesystem','volume'],zfs: '')
     results={}
     com = ['zfs', 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
