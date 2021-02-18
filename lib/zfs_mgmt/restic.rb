@@ -9,6 +9,10 @@ module ZfsMgmt::Restic
             '--tag', 'zfsmgmt',
             '--path', "/#{zfs}",
           ]
+    pp options
+    if options.has_key?('password_file')
+      com.push('-p',options['password_file'])
+    end
     if props.has_key?('zfsmgmt:restic_repository')
       com.push( '-r', props['zfsmgmt:restic_repository'] )
     end
@@ -118,6 +122,9 @@ module ZfsMgmt::Restic
                 '--stdin-filename', zfs, '--time', "\"#{zfs_snap_time.strftime('%F %T')}\"" )
       tags.each do |tag|
         com.push( '--tag', "\"#{tag}\"" )
+      end
+      if options.has_key?('password_file')
+        com.push('-p',options['password_file'])
       end
       if props.has_key?('zfsmgmt:restic_repository')
         com.push( '-r', props['zfsmgmt:restic_repository'] )
