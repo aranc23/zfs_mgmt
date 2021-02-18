@@ -9,7 +9,6 @@ module ZfsMgmt::Restic
             '--tag', 'zfsmgmt',
             '--path', "/#{zfs}",
           ]
-    pp options
     if options.has_key?('password_file')
       com.push('-p',options['password_file'])
     end
