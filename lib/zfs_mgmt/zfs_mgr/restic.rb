@@ -13,6 +13,10 @@ class ZfsMgmt::ZfsMgr::Backup < Thor
                :desc => 'buffer size for mbuffer'
   class_option :password_file, :alias => '-p', :type => :string,
                :desc => 'passed to restic'
+  class_option :limit_upload, :type => :numeric,
+               :desc => 'passed to restic'
+  class_option :repo, :type => :string,
+               :desc => 'passed to restic'
   desc "incremental", "perform incremental backup"
   method_option :level, :desc => "backup level in integer form", :default => 2, :type => :numeric
   method_option :intermediary, :alias => '-I', :desc => "pass -I (intermediary) option to zfs send", :default => false, :type => :boolean

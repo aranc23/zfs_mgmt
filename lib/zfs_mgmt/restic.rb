@@ -12,10 +12,12 @@ module ZfsMgmt::Restic
     if options.has_key?('password_file')
       com.push('-p',options['password_file'])
     end
-    if props.has_key?('zfsmgmt:restic_repository')
-      com.push( '-r', props['zfsmgmt:restic_repository'] )
+    if options.has_key?('repo')
+      com.push('--repo', options['repo'])
+    elsif props.has_key?('zfsmgmt:restic_repository')
+      com.push( '--repo', props['zfsmgmt:restic_repository'] )
     end
-    
+
     $logger.debug("#{com.join(' ')}")
     restic_output = %x(#{com.join(' ')})
     unless $?.success?
@@ -122,11 +124,16 @@ module ZfsMgmt::Restic
       tags.each do |tag|
         com.push( '--tag', "\"#{tag}\"" )
       end
+      if options.has_key?('limit_upload')
+        com.push('--limit-upload', options['limit_upload'])
+      end
       if options.has_key?('password_file')
         com.push('-p',options['password_file'])
       end
-      if props.has_key?('zfsmgmt:restic_repository')
-        com.push( '-r', props['zfsmgmt:restic_repository'] )
+      if options.has_key?('repo')
+        com.push('--repo', options['repo'])
+      elsif props.has_key?('zfsmgmt:restic_repository')
+        com.push( '--repo', props['zfsmgmt:restic_repository'] )
       end
       if options[:verbose]
         com.push('--verbose',options[:verbose])
