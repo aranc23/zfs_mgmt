@@ -109,7 +109,8 @@ module ZfsMgmt
 
   def self.zfsget(properties: ['name'],types: ['filesystem','volume'],zfs: '')
     results={}
-    com = [ZfsMgmt.global_options['zfs_binary'], 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
+    com = [ZfsMgmt.global_options[:zfs_binary], 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
+    $logger.debug(com.join(' '))
     so,se,status = Open3.capture3(com.join(' '))
     if status.signaled?
       $logger.error("process was signalled \"#{com.join(' ')}\", termsig #{status.termsig}")
