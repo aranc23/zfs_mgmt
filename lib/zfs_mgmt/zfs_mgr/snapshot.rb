@@ -11,14 +11,17 @@ class ZfsMgmt::ZfsMgr::Snapshot < Thor
                :desc => 'only act on zfs matching this regexp'
   desc "destroy", "apply the snapshot destroy policy to zfs"
   def destroy()
+    ZfsMgmt.global_options = options
     ZfsMgmt.snapshot_destroy(noop: options[:noop], verbopt: options[:verbose], debugopt: options[:debug], filter: options[:filter])
   end
   desc "policy", "print the policy table for zfs"
   def policy()
+    ZfsMgmt.global_options = options
     ZfsMgmt.snapshot_policy(verbopt: options[:verbose], debugopt: options[:debug], filter: options[:filter])
   end
   desc "create", "execute zfs snapshot based on zfs properties"
   def create()
+    ZfsMgmt.global_options = options
     ZfsMgmt.snapshot_create(verbopt: options[:verbose], debugopt: options[:debug], filter: options[:filter])
   end
 end

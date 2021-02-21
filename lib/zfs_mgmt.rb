@@ -38,6 +38,9 @@ $properties_xlate = {
 }
 
 module ZfsMgmt
+  class << self
+    attr_accessor :global_options
+  end
   def self.custom_properties()
     return [
       'policy',
@@ -67,7 +70,7 @@ module ZfsMgmt
   end
 
   def self.zfs_holds(snapshot)
-    com = ['zfs', 'holds', '-H', snapshot]
+    com = [global_options['zfs_binary'], 'holds', '-H', snapshot]
     $logger.debug("#{com.join(' ')}")
     out = %x(#{com.join(' ')})
     unless $?.success?
@@ -83,7 +86,7 @@ module ZfsMgmt
   end
 
   def self.zfs_hold(hold,snapshot)
-    com = ['zfs', 'hold', hold, snapshot]
+    com = [global_options['zfs_binary'], 'hold', hold, snapshot]
     $logger.debug("#{com.join(' ')}")
     system(com.join(' '))
     unless $?.success?
@@ -94,7 +97,7 @@ module ZfsMgmt
   end
 
   def self.zfs_release(hold,snapshot)
-    com = ['zfs', 'release', hold, snapshot]
+    com = [@global_options['zfs_binary'], 'release', hold, snapshot]
     $logger.debug("#{com.join(' ')}")
     system(com.join(' '))
     unless $?.success?
@@ -106,7 +109,7 @@ module ZfsMgmt
 
   def self.zfsget(properties: ['name'],types: ['filesystem','volume'],zfs: '')
     results={}
-    com = ['zfs', 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
+    com = [ZfsMgmt.global_options['zfs_binary'], 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
     so,se,status = Open3.capture3(com.join(' '))
     if status.signaled?
       $logger.error("process was signalled \"#{com.join(' ')}\", termsig #{status.termsig}")
@@ -371,7 +374,7 @@ module ZfsMgmt
         
         prefix = ( props.has_key?('zfsmgmt:snap_prefix') ? props['zfsmgmt:snap_prefix'] : 'zfsmgmt' )
         ts = ( props.has_key?('zfsmgmt:snap_timestamp') ? props['zfsmgmt:snap_timestamp'] : '%FT%T%z' )
-        com = ['zfs','snapshot']
+        com = [global_options['zfs_binary'],'snapshot']
         if props['zfsmgmt:snapshot'] == 'recursive' and props['zfsmgmt:snapshot@source'] == 'local'
           com.push('-r')
         end

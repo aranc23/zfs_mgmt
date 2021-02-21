@@ -107,7 +107,7 @@ module ZfsMgmt::Restic
                "zfsmgmt:snapshot=#{last_zfs_snapshot}",
                "zfsmgmt:zfs=#{zfs}",
                "zfsmgmt:level=#{level}" ]
-      com = [ options[:zfs_binary], 'send', '-L', '-w', '-h', '-p' ]
+      com = [ ZfsMgmt.global_options['zfs_binary'], 'send', '-L', '-w', '-h', '-p' ]
       if level > 0
         if options[:intermediary]
           com.push('-I')

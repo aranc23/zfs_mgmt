@@ -6,6 +6,7 @@ class ZfsMgmt::ZfsMgr::List < Thor
   desc "stale", "list all zfs with stale snapshots"
   method_option :age, :desc => "timeframe outside of which the zfs will be considered stale", :default => '1d'
   def stale()
+    ZfsMgmt.global_options = options
     cutoff = Time.at(Time.now.to_i -  ZfsMgmt.timespec_to_seconds(options[:age]))
     table = Text::Table.new
     table.head = ['zfs','snapshot','age']

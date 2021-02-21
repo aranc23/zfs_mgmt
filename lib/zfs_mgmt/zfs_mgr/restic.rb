@@ -5,8 +5,6 @@ class ZfsMgmt::ZfsMgr::Backup < Thor
                :desc => 'only act on zfs matching this regexp'
   class_option :restic_binary, :type => :string, :default => 'restic',
                :desc => 'restic binary'
-  class_option :zfs_binary, :type => :string, :default => 'zfs',
-               :desc => 'zfs binary'
   class_option :verbose, :alias => '-v', :type => :numeric,
                :desc => 'verbosity level for restic'
   class_option :buffer, :type => :string, :default => '256m',
@@ -21,15 +19,18 @@ class ZfsMgmt::ZfsMgr::Backup < Thor
   method_option :level, :desc => "backup level in integer form", :default => 2, :type => :numeric
   method_option :intermediary, :alias => '-I', :desc => "pass -I (intermediary) option to zfs send", :default => false, :type => :boolean
   def incremental()
+    ZfsMgmt.global_options = options
     ZfsMgmt::Restic.backup(backup_level: options[:level], options: options)
   end
   desc "differential", "perform differential backup"
   method_option :intermediary, :alias => '-I', :desc => "pass -I (intermediary) option to zfs send", :default => false, :type => :boolean
   def differential()
+    ZfsMgmt.global_options = options
     ZfsMgmt::Restic.backup(backup_level: 1, options: options)
   end
   desc "full", "perform full backup"
   def full()
+    ZfsMgmt.global_options = options
     ZfsMgmt::Restic.backup(backup_level: 0, options: options)
   end
 end
