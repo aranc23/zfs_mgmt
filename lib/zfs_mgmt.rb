@@ -41,6 +41,8 @@ module ZfsMgmt
   class << self
     attr_accessor :global_options
   end
+  class ZfsGetError < StandardError
+  end
   def self.custom_properties()
     return [
       'policy',
@@ -53,6 +55,9 @@ module ZfsMgmt
       'snapshot',
       'snap_prefix',
       'snap_timestamp',
+      'send',
+      'remote',
+      'destination',
     ].map do |p|
       ['zfsmgmt',p].join(':')
     end
@@ -107,20 +112,20 @@ module ZfsMgmt
     end
   end
 
-  def self.zfsget(properties: ['name'],types: ['filesystem','volume'],zfs: '')
+  def self.zfsget(properties: ['name'],types: ['filesystem','volume'],zfs: '', command_prefix: [])
     results={}
     com = [ZfsMgmt.global_options[:zfs_binary], 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
-    $logger.debug(com.join(' '))
-    so,se,status = Open3.capture3(com.join(' '))
+    $logger.debug((command_prefix+com).join(' '))
+    so,se,status = Open3.capture3((command_prefix+com).join(' '))
     if status.signaled?
       $logger.error("process was signalled \"#{com.join(' ')}\", termsig #{status.termsig}")
-      raise 'ZfsGetError'
+      raise ZfsGetError, "process was signalled \"#{com.join(' ')}\", termsig #{status.termsig}"
     end
     unless status.success?
       $logger.error("failed to execute \"#{com.join(' ')}\", exit status #{status.exitstatus}")
       so.split("\n").each { |l| $logger.debug("stdout: #{l}") }
       se.split("\n").each { |l| $logger.error("stderr: #{l}") }
-      raise 'ZfsGetError'
+      raise ZfsGetError, "failed to execute \"#{com.join(' ')}\", exit status #{status.exitstatus}"
     end
     so.split("\n").each do |line|
       params = line.split("\t")
@@ -384,5 +389,139 @@ module ZfsMgmt
         system(com.join(' '))
       end
     end
+  end
+  def self.zfs_send(options,zfs,props,snaps)
+    sorted = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }
+    # compute the zfs "path"
+    # ternary operator 4eva
+    destination_path = ( options[:destination] ? options[:destination] : props['zfsmgmt:destination'] )
+    if props['zfsmgmt:destination@source'] == 'local'
+      destination_path = File.join( destination_path,
+                                    File.basename(zfs)
+                                  )
+    elsif m = /inherited from (.+)/.match(props['zfsmgmt:destination@source'])
+      destination_path = File.join( destination_path,
+                                    File.basename(m[1]),
+                                    zfs.sub(m[1],'')
+                                  )
+    else
+      $logger.error("fatal error: #{props['zfsmgmt:destination']} source: #{props['zfsmgmt:destination@source']}")
+      exit(1)
+    end
+    recv_command_prefix = []
+    if options[:remote] or props['zfsmgmt:remote']
+      recv_command_prefix = [ 'ssh',
+                              (options[:remote] ? options[:remote] : props['zfsmgmt:remote']),
+                            ]
+    end
+    # does the destination zfs already exist?
+    remote_zfs_state = ''
+    begin
+      recv_zfs = zfsget(zfs: destination_path,
+                        command_prefix: recv_command_prefix,
+                        properties: ['receive_resume_token'],
+                       )
+    rescue ZfsGetError
+      $logger.debug("recv filesystem doesn't exist: #{destination_path}")
+      remote_zfs_state = 'missing'
+    else
+      if recv_zfs[destination_path].has_key?('receive_resume_token')
+        remote_zfs_state = recv_zfs[destination_path]['receive_resume_token']
+      else
+        remote_zfs_state = 'present'
+      end
+    end
+    if remote_zfs_state == 'missing'
+      # the zfs does not exist, send initial (oldest?) snapshot
+      com = [ ZfsMgmt.global_options[:zfs_binary], 'send', '-P' ]
+      com.push('-p') if options[:properties]
+      com.push('-w') if options[:raw]
+      com.push('-L') if options[:large_block]
+      com.push('-e') if options[:embed]
+      com.push('-c') if options[:compressed]
+      com.push('-v') if options[:verbose]
+      com.push("\"#{sorted[0]}\"",'|')
+      com.push(ZfsMgmt.global_options[:mbuffer_binary],'-q','|') if options[:mbuffer]
+      com.push(recv_command_prefix)
+      com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-s')
+      com.push('-n') if options[:noop]
+      com.push('-u') if options[:unmount]
+      com.push("\"#{destination_path}\"")
+      
+      $logger.debug(com.join(' '))
+      system(com.join(' '))
+      unless $?.success?
+        $logger.error("initial send failed: #{$?.exitstatus}")
+        return
+      end
+    elsif remote_zfs_state != 'present'
+      # should be resumable!
+      com = [ ZfsMgmt.global_options[:zfs_binary], 'send', '-t', remote_zfs_state ]
+      com.push('-v') if options[:verbose]
+      com.push('|')
+      com.push(ZfsMgmt.global_options[:mbuffer_binary],'-q','|') if options[:mbuffer]
+      com.push(recv_command_prefix)
+      com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-s' )
+      com.push('-n') if options[:noop]
+      com.push('-u') if options[:unmount]
+      com.push("\"#{destination_path}\"")
+      
+      $logger.debug(com.join(' '))
+      system(com.join(' '))
+      unless $?.success?
+        $logger.error("resume failed: #{$?.exitstatus}")
+        return
+      end
+    end
+    
+    # the zfs already exists, so update with incremental?
+    begin
+      remote_snaps = zfsget(zfs: destination_path,
+                            types: ['snapshot'],
+                            command_prefix: recv_command_prefix,
+                            properties: ['creation','userrefs'],
+                           )
+    rescue ZfsGetError
+      $logger.error("unable to get remote snapshot information for #{destination_path}")
+      return
+    end
+    unless remote_snaps and remote_snaps.keys.length > 0
+      $logger.error("receiving filesystem has NO snapshots, it must be destroyed: #{destination_path}")
+      return
+    end
+    if remote_snaps.has_key?(sorted[-1].sub(zfs,destination_path))
+      $logger.info("the most recent local snapshot (#{sorted[-1]}) already exists on the remote side (#{sorted[-1].sub(zfs,destination_path)})")
+      return
+    end
+    remote_snaps.sort_by { |k,v| -v['creation'] }.each do |rsnap,v|
+      # oldest first
+      #pp rsnap,rsnap.sub(destination_path,zfs)
+      #pp snaps
+      if snaps.has_key?(rsnap.sub(destination_path,zfs))
+        $logger.debug("process #{rsnap} to #{sorted[0]}")
+        com = [ ZfsMgmt.global_options[:zfs_binary], 'send', '-P' ]
+        com.push('-p') if options[:properties]
+        com.push('-w') if options[:raw]
+        com.push('-L') if options[:large_block]
+        com.push('-e') if options[:embed]
+        com.push('-c') if options[:compressed]
+        com.push('-v') if options[:verbose]
+        com.push(options[:intermediary] ? '-I' : '-i')
+        com.push("\"@#{rsnap.split('@')[1]}\"")
+        com.push("\"#{sorted[-1]}\"",'|')
+        com.push(ZfsMgmt.global_options[:mbuffer_binary],'-q','|') if options[:mbuffer]
+        com.push(recv_command_prefix)
+        com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-F', '-s')
+        com.push('-n') if options[:noop]
+        com.push('-u') if options[:unmount]
+        com.push("\"#{destination_path}\"")
+      
+      $logger.debug(com.join(' '))
+      system(com.join(' '))
+        return
+      end
+    end
+    $logger.error("receiving filesystem has no snapshots that still exists on the sending side, it must be destroyed: #{destination_path}")
+    
   end
 end

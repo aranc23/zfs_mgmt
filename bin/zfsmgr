@@ -8,7 +8,9 @@ class ZfsMgr < Thor
   class_option :zfs_binary, :type => :string, :default => 'zfs',
                :desc => 'zfs binary'
   class_option :zpool_binary, :type => :string, :default => 'zpool',
-               :desc => 'zfs binary'
+               :desc => 'zpool binary'
+  class_option :mbuffer_binary, :type => :string, :default => 'mbuffer',
+               :desc => 'mbuffer binary'
   desc "zfsget [ZFS]", "execute zfs get for the given properties and types and parse the output into a nested hash"
   method_option :properties, :type => :array, :default => ['name'], :desc => "List of properties passed to zfs get"
   method_option :types,      :type => :array, :default => ['filesystem','volume'], enum: ['filesystem','volume','snapshot'], :desc => "list of types"
@@ -24,6 +26,8 @@ class ZfsMgr < Thor
   subcommand "list", ZfsMgmt::ZfsMgr::List
   desc "restic SUBCOMMAND ...ARGS", "backup zfs to restic"
   subcommand "restic", ZfsMgmt::ZfsMgr::Restic
+  desc "send SUBCOMMAND ...ARGS", "send zfs"
+  subcommand "send", ZfsMgmt::ZfsMgr::Send
 end
 
 ZfsMgr.start(ARGV)
