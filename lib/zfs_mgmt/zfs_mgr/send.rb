@@ -8,18 +8,21 @@ class ZfsMgmt::ZfsMgr::Send < Thor
                 :desc => 'remote specification like root@otherhost or localhost'
   method_option :destination, :type => :string,
                 :desc => 'destination path like otherpool/ourpool'
-  method_option :noop, :type => :string, :alias => '-n',
+  method_option :noop, :type => :string, :aliases => :'-n',
                 :desc => 'pass the -n option to zfs recv'
-  method_option :verbose, :type => :boolean, :alias => 'v', :default => false,
-                :desc => 'pass the -v option to zfs send'
-  method_option :intermediary, :alias => '-I', :desc => "pass -I (intermediary) option to zfs send", :default => false, :type => :boolean
-  method_option :properties, :alias => '-p', :desc => "pass -p (properties) option to zfs send", :default => true, :type => :boolean
-  method_option :raw, :alias => '-w', :desc => "pass -w (raw) option to zfs send", :default => false, :type => :boolean
-  method_option :large_block, :alias => '-L', :desc => "pass -L (large block) option to zfs send", :default => true, :type => :boolean
-  method_option :embed, :alias => '-e', :desc => "pass -e (embed) option to zfs send", :default => true, :type => :boolean
-  method_option :compressed, :alias => '-c', :desc => "pass -c (compressed) option to zfs send", :default => true, :type => :boolean
-  method_option :unmount, :alias => '-u', :desc => "pass -u (unmount) option to zfs receive", :default => true, :type => :boolean
+  method_option :verbose, :type => :string, :aliases => :'-v', :enum => ['send','receive','recv','mbuffer','pv'],
+                :desc => 'enable verbose output on the specified element of the pipe'
+  method_option :intermediary, :aliases => :'-I', :desc => "pass -I (intermediary) option to zfs send", :default => false, :type => :boolean
+  method_option :properties, :aliases => :'-p', :desc => "pass -p (properties) option to zfs send", :default => true, :type => :boolean
+  method_option :raw, :aliases => :'-w', :desc => "pass -w (raw) option to zfs send", :default => false, :type => :boolean
+  method_option :large_block, :aliases => :'-L', :desc => "pass -L (large block) option to zfs send", :default => true, :type => :boolean
+  method_option :embed, :aliases => :'-e', :desc => "pass -e (embed) option to zfs send", :default => true, :type => :boolean
+  method_option :compressed, :aliases => :'-c', :desc => "pass -c (compressed) option to zfs send", :default => true, :type => :boolean
+  method_option :unmount, :aliases => :'-u', :desc => "pass -u (unmount) option to zfs receive", :default => true, :type => :boolean
   method_option :mbuffer, :desc => "insert mbuffer between send and recv", :default => true, :type => :boolean
+  method_option :mbuffer_size, :desc => "passed to mbuffer -s option", :type => :string
+  method_option :exclude, :aliases => :'-x', :desc => "passed to -x option of receive side", :type => :array
+  method_option :option, :aliases => :'-o', :desc => "passed to -o option of receive side", :type => :array
   def all()
     ZfsMgmt.global_options = options
 

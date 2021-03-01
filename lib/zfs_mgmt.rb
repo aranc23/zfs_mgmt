@@ -431,21 +431,38 @@ module ZfsMgmt
         remote_zfs_state = 'present'
       end
     end
+    if options[:mbuffer]
+      mbuffer_command = [ ZfsMgmt.global_options[:mbuffer_binary] ]
+      mbuffer_command.push('-q') unless options[:verbose] == 'mbuffer'
+      mbuffer_command.push('-m',options[:mbuffer_size]) if options[:mbuffer_size]
+      mbuffer_command.push('|')
+    end
     if remote_zfs_state == 'missing'
       # the zfs does not exist, send initial (oldest?) snapshot
-      com = [ ZfsMgmt.global_options[:zfs_binary], 'send', '-P' ]
+      com = [ ZfsMgmt.global_options[:zfs_binary], 'send' ]
       com.push('-p') if options[:properties]
       com.push('-w') if options[:raw]
       com.push('-L') if options[:large_block]
       com.push('-e') if options[:embed]
       com.push('-c') if options[:compressed]
-      com.push('-v') if options[:verbose]
+      com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
       com.push("\"#{sorted[0]}\"",'|')
-      com.push(ZfsMgmt.global_options[:mbuffer_binary],'-q','|') if options[:mbuffer]
+      com.push(mbuffer_command) if options[:mbuffer]
       com.push(recv_command_prefix)
-      com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-s')
+      com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-s'  )
       com.push('-n') if options[:noop]
       com.push('-u') if options[:unmount]
+      com.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
+      if options[:exclude]
+        options[:exclude].each do |x|
+          com.push('-x',x)
+        end
+      end
+      if options[:option]
+        options[:option].each do |x|
+          com.push('-o',x)
+        end
+      end
       com.push("\"#{destination_path}\"")
       
       $logger.debug(com.join(' '))
@@ -457,13 +474,14 @@ module ZfsMgmt
     elsif remote_zfs_state != 'present'
       # should be resumable!
       com = [ ZfsMgmt.global_options[:zfs_binary], 'send', '-t', remote_zfs_state ]
-      com.push('-v') if options[:verbose]
+      com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
       com.push('|')
-      com.push(ZfsMgmt.global_options[:mbuffer_binary],'-q','|') if options[:mbuffer]
+      com.push(mbuffer_command) if options[:mbuffer]
       com.push(recv_command_prefix)
       com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-s' )
       com.push('-n') if options[:noop]
       com.push('-u') if options[:unmount]
+      com.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
       com.push("\"#{destination_path}\"")
       
       $logger.debug(com.join(' '))
@@ -499,21 +517,32 @@ module ZfsMgmt
       #pp snaps
       if snaps.has_key?(rsnap.sub(destination_path,zfs))
         $logger.debug("process #{rsnap} to #{sorted[0]}")
-        com = [ ZfsMgmt.global_options[:zfs_binary], 'send', '-P' ]
+        com = [ ZfsMgmt.global_options[:zfs_binary], 'send' ]
         com.push('-p') if options[:properties]
         com.push('-w') if options[:raw]
         com.push('-L') if options[:large_block]
         com.push('-e') if options[:embed]
         com.push('-c') if options[:compressed]
-        com.push('-v') if options[:verbose]
+        com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
         com.push(options[:intermediary] ? '-I' : '-i')
         com.push("\"@#{rsnap.split('@')[1]}\"")
         com.push("\"#{sorted[-1]}\"",'|')
-        com.push(ZfsMgmt.global_options[:mbuffer_binary],'-q','|') if options[:mbuffer]
+        com.push(mbuffer_command) if options[:mbuffer]
         com.push(recv_command_prefix)
-        com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-F', '-s')
+        com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-F', '-s' )
         com.push('-n') if options[:noop]
         com.push('-u') if options[:unmount]
+        com.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
+        if options[:exclude]
+          options[:exclude].each do |x|
+            com.push('-x',x)
+          end
+        end
+        if options[:option]
+          options[:option].each do |x|
+            com.push('-o',x)
+          end
+        end
         com.push("\"#{destination_path}\"")
       
       $logger.debug(com.join(' '))
