@@ -462,7 +462,6 @@ module ZfsMgmt
 
     if remote_zfs_state == 'missing'
       # the zfs does not exist, send initial (oldest?) snapshot
-      $logger.debug("1zfs_send_com: #{zfs_send_com}")
       com = []
       com += zfs_send_com
       com.push("\"#{sorted[0]}\"",'|')
