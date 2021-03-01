@@ -437,47 +437,54 @@ module ZfsMgmt
       mbuffer_command.push('-m',options[:mbuffer_size]) if options[:mbuffer_size]
       mbuffer_command.push('|')
     end
+    zfs_send_com = [ ZfsMgmt.global_options[:zfs_binary], 'send' ]
+    zfs_send_com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
+    zfs_send_com.push('-p') if options[:properties]
+    zfs_send_com.push('-w') if options[:raw]
+    zfs_send_com.push('-L') if options[:large_block]
+    zfs_send_com.push('-e') if options[:embed]
+    zfs_send_com.push('-c') if options[:compressed]
+
+    zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv', '-s' ]
+    zfs_recv_com.push('-n') if options[:noop]
+    zfs_recv_com.push('-u') if options[:unmount]
+    zfs_recv_com.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
+    if options[:exclude]
+      options[:exclude].each do |x|
+        zfs_recv_com.push('-x',x)
+      end
+    end
+    if options[:option]
+      options[:option].each do |x|
+        zfs_recv_com.push('-o',x)
+      end
+    end
+
     if remote_zfs_state == 'missing'
       # the zfs does not exist, send initial (oldest?) snapshot
-      com = [ ZfsMgmt.global_options[:zfs_binary], 'send' ]
-      com.push('-p') if options[:properties]
-      com.push('-w') if options[:raw]
-      com.push('-L') if options[:large_block]
-      com.push('-e') if options[:embed]
-      com.push('-c') if options[:compressed]
-      com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
+      $logger.debug("1zfs_send_com: #{zfs_send_com}")
+      com = []
+      com += zfs_send_com
       com.push("\"#{sorted[0]}\"",'|')
-      com.push(mbuffer_command) if options[:mbuffer]
-      com.push(recv_command_prefix)
-      com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-s'  )
-      com.push('-n') if options[:noop]
-      com.push('-u') if options[:unmount]
-      com.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
-      if options[:exclude]
-        options[:exclude].each do |x|
-          com.push('-x',x)
-        end
-      end
-      if options[:option]
-        options[:option].each do |x|
-          com.push('-o',x)
-        end
-      end
+      com += mbuffer_command if options[:mbuffer]
+      com += recv_command_prefix if recv_command_prefix.length > 0
+      com += zfs_recv_com
       com.push("\"#{destination_path}\"")
       
-      $logger.debug(com.join(' '))
       system(com.join(' '))
       unless $?.success?
         $logger.error("initial send failed: #{$?.exitstatus}")
         return
       end
+
     elsif remote_zfs_state != 'present'
       # should be resumable!
-      com = [ ZfsMgmt.global_options[:zfs_binary], 'send', '-t', remote_zfs_state ]
+      com = [ ]
+      com.push( ZfsMgmt.global_options[:zfs_binary], 'send', '-t', remote_zfs_state )
       com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
       com.push('|')
-      com.push(mbuffer_command) if options[:mbuffer]
-      com.push(recv_command_prefix)
+      com += mbuffer_command if options[:mbuffer]
+      com += recv_command_prefix if recv_command_prefix.length > 0
       com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-s' )
       com.push('-n') if options[:noop]
       com.push('-u') if options[:unmount]
@@ -517,36 +524,19 @@ module ZfsMgmt
       #pp snaps
       if snaps.has_key?(rsnap.sub(destination_path,zfs))
         $logger.debug("process #{rsnap} to #{sorted[0]}")
-        com = [ ZfsMgmt.global_options[:zfs_binary], 'send' ]
-        com.push('-p') if options[:properties]
-        com.push('-w') if options[:raw]
-        com.push('-L') if options[:large_block]
-        com.push('-e') if options[:embed]
-        com.push('-c') if options[:compressed]
-        com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
+        com = []
+        com += zfs_send_com
         com.push(options[:intermediary] ? '-I' : '-i')
         com.push("\"@#{rsnap.split('@')[1]}\"")
         com.push("\"#{sorted[-1]}\"",'|')
-        com.push(mbuffer_command) if options[:mbuffer]
-        com.push(recv_command_prefix)
-        com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-F', '-s' )
-        com.push('-n') if options[:noop]
-        com.push('-u') if options[:unmount]
-        com.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
-        if options[:exclude]
-          options[:exclude].each do |x|
-            com.push('-x',x)
-          end
-        end
-        if options[:option]
-          options[:option].each do |x|
-            com.push('-o',x)
-          end
-        end
+        com += mbuffer_command if options[:mbuffer]
+        com += recv_command_prefix if recv_command_prefix.length > 0
+        com += zfs_recv_com
+        com.push('-F')
         com.push("\"#{destination_path}\"")
-      
-      $logger.debug(com.join(' '))
-      system(com.join(' '))
+        
+        $logger.debug(com.join(' '))
+        system(com.join(' '))
         return
       end
     end
