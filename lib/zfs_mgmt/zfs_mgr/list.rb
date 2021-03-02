@@ -23,4 +23,21 @@ class ZfsMgmt::ZfsMgr::List < Thor
       print table.to_s
     end
   end
+  desc "holds", "list all holds on snapshots"
+  def holds()
+    ZfsMgmt.global_options = options
+    table = Text::Table.new
+    table.head = ['snapshot','userrefs','holds']
+    table.rows = []
+    ZfsMgmt.zfs_managed_list(filter: options[:filter], property_match: {} ).each do |zfs,props,snaps|
+      snaps.sort_by { |x,y| y['creation'] }.each do |snap,d|
+        if d['userrefs'] > 0
+          table.rows << [snap,d['userrefs'].to_s,ZfsMgmt.zfs_holds(snap).join(',')]
+        end
+      end
+    end
+    if table.rows.count > 0
+      print table.to_s
+    end
+  end
 end
