@@ -408,12 +408,9 @@ module ZfsMgmt
       $logger.error("fatal error: #{props['zfsmgmt:destination']} source: #{props['zfsmgmt:destination@source']}")
       exit(1)
     end
-    recv_command_prefix = []
-    if options[:remote] or props['zfsmgmt:remote']
-      recv_command_prefix = [ 'ssh',
-                              (options[:remote] ? options[:remote] : props['zfsmgmt:remote']),
-                            ]
-    end
+    recv_command_prefix = ( (options[:remote] or props['zfsmgmt:remote']) ?
+                              [ 'ssh', ( options[:remote] ? options[:remote] : props['zfsmgmt:remote'] ) ] :
+                              [] )
     # does the destination zfs already exist?
     remote_zfs_state = ''
     begin
@@ -445,7 +442,7 @@ module ZfsMgmt
     zfs_send_com.push('-e') if options[:embed]
     zfs_send_com.push('-c') if options[:compressed]
 
-    zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv', '-s' ]
+    zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv', '-F', '-s' ]
     zfs_recv_com.push('-n') if options[:noop]
     zfs_recv_com.push('-u') if options[:unmount]
     zfs_recv_com.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
@@ -459,6 +456,15 @@ module ZfsMgmt
         zfs_recv_com.push('-o',x)
       end
     end
+    zfs_recv_com.push("\"#{destination_path}\"")
+
+    if options[:remote] or props['zfsmgmt:remote']
+      if options[:mbuffer]
+        zfs_recv_com = mbuffer_command + zfs_recv_com
+      end
+      zfs_recv_com = recv_command_prefix + [ "'#{zfs_recv_com.join(' ')}'" ]
+    end
+
 
     if remote_zfs_state == 'missing'
       # the zfs does not exist, send initial (oldest?) snapshot
@@ -466,22 +472,9 @@ module ZfsMgmt
       com += zfs_send_com
       com.push("\"#{sorted[0]}\"",'|')
       com += mbuffer_command if options[:mbuffer]
-
-      remcom = []
-      remcom += zfs_recv_com
-      remcom.push("\"#{destination_path}\"")
-
-      if recv_command_prefix.length > 0
-        com += recv_command_prefix if recv_command_prefix.length > 0
-        if options[:mbuffer]
-          remcom = mbuffer_command + remcom
-        end
-        # single quote the entire remote command as passed to ssh
-        com.push("'#{remcom.join(' ')}'")
-      else
-        com += remcom
-      end
-      
+      com += zfs_recv_com
+ 
+      $logger.debug(com.join(' '))
       system(com.join(' '))
       unless $?.success?
         $logger.error("initial send failed: #{$?.exitstatus}")
@@ -541,23 +534,8 @@ module ZfsMgmt
         com.push("\"@#{rsnap.split('@')[1]}\"")
         com.push("\"#{sorted[-1]}\"",'|')
         com += mbuffer_command if options[:mbuffer]
-
-        remcom = []
-        remcom += zfs_recv_com
-        remcom.push('-F')
-        remcom.push("\"#{destination_path}\"")
-
-        if recv_command_prefix.length > 0
-          com += recv_command_prefix if recv_command_prefix.length > 0
-          if options[:mbuffer]
-            remcom = mbuffer_command + remcom
-          end
-          # single quote the entire remote command as passed to ssh
-          com.push("'#{remcom.join(' ')}'")
-        else
-          com += remcom
-        end
-
+        com += zfs_recv_com
+ 
         $logger.debug(com.join(' '))
         system(com.join(' '))
         return
