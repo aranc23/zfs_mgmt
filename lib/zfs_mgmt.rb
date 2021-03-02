@@ -408,14 +408,11 @@ module ZfsMgmt
       $logger.error("fatal error: #{props['zfsmgmt:destination']} source: #{props['zfsmgmt:destination@source']}")
       exit(1)
     end
-    recv_command_prefix = ( (options[:remote] or props['zfsmgmt:remote']) ?
-                              [ 'ssh', ( options[:remote] ? options[:remote] : props['zfsmgmt:remote'] ) ] :
-                              [] )
     # does the destination zfs already exist?
     remote_zfs_state = ''
     begin
       recv_zfs = zfsget(zfs: destination_path,
-                        command_prefix: recv_command_prefix,
+                        command_prefix: recv_command_prefix(options,props),
                         properties: ['receive_resume_token'],
                        )
     rescue ZfsGetError
@@ -450,13 +447,22 @@ module ZfsMgmt
       com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
       com.push('|')
       com += mbuffer_command(options) if options[:mbuffer]
-      com += recv_command_prefix if recv_command_prefix.length > 0
-      com.push(ZfsMgmt.global_options[:zfs_binary], 'recv', '-s' )
-      com.push('-n') if options[:noop]
-      com.push('-u') if options[:unmount]
-      com.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
-      com.push("\"#{destination_path}\"")
-      
+
+      recv = [ ZfsMgmt.global_options[:zfs_binary], 'recv', '-s' ]
+      recv.push('-n') if options[:noop]
+      recv.push('-u') if options[:unmount]
+      recv.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
+      recv.push(dq(destination_path))
+
+      if options[:remote] or props['zfsmgmt:remote']
+        if options[:mbuffer]
+          recv = mbuffer_command(options) + recv
+        end
+        recv = recv_command_prefix(options,props) + [ sq(recv.join(' ')) ]
+      end
+
+      com += recv
+
       $logger.debug(com.join(' '))
       system(com.join(' '))
       unless $?.success?
@@ -469,7 +475,7 @@ module ZfsMgmt
     begin
       remote_snaps = zfsget(zfs: destination_path,
                             types: ['snapshot'],
-                            command_prefix: recv_command_prefix,
+                            command_prefix: recv_command_prefix(options,props),
                             properties: ['creation','userrefs'],
                            )
     rescue ZfsGetError
@@ -544,9 +550,14 @@ module ZfsMgmt
       if options[:mbuffer]
         zfs_recv_com = mbuffer_command(options) + zfs_recv_com
       end
-      zfs_recv_com = recv_command_prefix + [ sq(zfs_recv_com) ]
+      zfs_recv_com = recv_command_prefix(options,props) + [ sq(zfs_recv_com.join(' ')) ]
     end
     zfs_recv_com
+  end
+  def self.recv_command_prefix(options,props)
+    ( (options[:remote] or props['zfsmgmt:remote']) ?
+        [ 'ssh', ( options[:remote] ? options[:remote] : props['zfsmgmt:remote'] ) ] :
+        [] )
   end
   def self.sq(s)
     "'#{s}'"
