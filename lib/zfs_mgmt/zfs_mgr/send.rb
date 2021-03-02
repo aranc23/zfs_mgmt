@@ -23,6 +23,8 @@ class ZfsMgmt::ZfsMgr::Send < Thor
   method_option :mbuffer_size, :desc => "passed to mbuffer -s option", :type => :string
   method_option :exclude, :aliases => :'-x', :desc => "passed to -x option of receive side", :type => :array
   method_option :option, :aliases => :'-o', :desc => "passed to -o option of receive side", :type => :array
+  method_option :drop_holds, :desc => "pass the -h option to zfs recv, indicating holds should be ignored", :type => :boolean, :default => false
+  method_option :holds, :desc => "pass the -h option to zfs sned", :type => :boolean, :default => false
   def all()
     ZfsMgmt.global_options = options
 
