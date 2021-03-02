@@ -430,7 +430,9 @@ module ZfsMgmt
       # the zfs does not exist, send initial (oldest?) snapshot
       com = []
       com += zfs_send_com(options,[],sorted[0])
+      e = zfs_send_estimate(com) if options[:verbose] == 'pv'
       com += mbuffer_command(options) if options[:mbuffer]
+      com += pv_command(options,e) if options[:verbose] == 'pv'
       com += zfs_recv_com(options,[],props,destination_path)
  
       $logger.debug(com.join(' '))
@@ -446,7 +448,9 @@ module ZfsMgmt
       com.push( ZfsMgmt.global_options[:zfs_binary], 'send', '-t', remote_zfs_state )
       com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
       com.push('|')
+      e = zfs_send_estimate(com) if options[:verbose] == 'pv'
       com += mbuffer_command(options) if options[:mbuffer]
+      com += pv_command(options,e) if options[:verbose] == 'pv'
 
       recv = [ ZfsMgmt.global_options[:zfs_binary], 'recv', '-s' ]
       recv.push('-n') if options[:noop]
@@ -498,7 +502,9 @@ module ZfsMgmt
         $logger.debug("process #{rsnap} to #{sorted[0]}")
         com = []
         com += zfs_send_com(options,[(options[:intermediary] ? '-I' : '-i'),dq(rsnap.split('@')[1])],sorted[-1])
+        e = zfs_send_estimate(com) if options[:verbose] == 'pv'
         com += mbuffer_command(options) if options[:mbuffer]
+        com += pv_command(options,e) if options[:verbose] == 'pv'
         com += zfs_recv_com(options,[],props,destination_path)
  
         $logger.debug(com.join(' '))
@@ -559,6 +565,33 @@ module ZfsMgmt
         [ 'ssh', ( options[:remote] ? options[:remote] : props['zfsmgmt:remote'] ) ] :
         [] )
   end
+  def self.zfs_send_estimate(com)
+    lcom = com.dup
+    lcom.pop() # remove the pipe symbol
+    precom = [ lcom.shift, lcom.shift ]
+    lcom.unshift('-P') unless lcom.include?('-P')
+    lcom.unshift('-n')
+    lcom.push('2>&1')
+    lcom = precom + lcom
+    $logger.debug(lcom.join(' '))
+    %x[#{lcom.join(' ')}].each_line do |l|
+      if m = /(incremental|size).*\s+(\d+)$/.match(l)
+        return m[2].to_i
+      end
+    end
+    $logger.error("no estimate available")
+    return nil
+  end
+  def self.pv_command(options,estimate)
+    a = []
+    a += [options[:pv_binary], '-prb' ]
+    if estimate
+      a += ['-e', '-s', estimate ]
+    end
+    a.push('|')
+    a
+  end
+    
   def self.sq(s)
     "'#{s}'"
   end

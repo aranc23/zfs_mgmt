@@ -11,6 +11,8 @@ class ZfsMgr < Thor
                :desc => 'zpool binary'
   class_option :mbuffer_binary, :type => :string, :default => 'mbuffer',
                :desc => 'mbuffer binary'
+  class_option :pv_binary, :type => :string, :default => 'pv',
+               :desc => 'pv binary'
   desc "zfsget [ZFS]", "execute zfs get for the given properties and types and parse the output into a nested hash"
   method_option :properties, :type => :array, :default => ['name'], :desc => "List of properties passed to zfs get"
   method_option :types,      :type => :array, :default => ['filesystem','volume'], enum: ['filesystem','volume','snapshot'], :desc => "list of types"
