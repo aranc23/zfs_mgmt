@@ -466,9 +466,21 @@ module ZfsMgmt
       com += zfs_send_com
       com.push("\"#{sorted[0]}\"",'|')
       com += mbuffer_command if options[:mbuffer]
-      com += recv_command_prefix if recv_command_prefix.length > 0
-      com += zfs_recv_com
-      com.push("\"#{destination_path}\"")
+
+      remcom = []
+      remcom += zfs_recv_com
+      remcom.push("\"#{destination_path}\"")
+
+      if recv_command_prefix.length > 0
+        com += recv_command_prefix if recv_command_prefix.length > 0
+        if options[:mbuffer]
+          remcom = mbuffer_command + remcom
+        end
+        # single quote the entire remote command as passed to ssh
+        com.push("'#{remcom.join(' ')}'")
+      else
+        com += remcom
+      end
       
       system(com.join(' '))
       unless $?.success?
@@ -529,11 +541,23 @@ module ZfsMgmt
         com.push("\"@#{rsnap.split('@')[1]}\"")
         com.push("\"#{sorted[-1]}\"",'|')
         com += mbuffer_command if options[:mbuffer]
-        com += recv_command_prefix if recv_command_prefix.length > 0
-        com += zfs_recv_com
-        com.push('-F')
-        com.push("\"#{destination_path}\"")
-        
+
+        remcom = []
+        remcom += zfs_recv_com
+        remcom.push('-F')
+        remcom.push("\"#{destination_path}\"")
+
+        if recv_command_prefix.length > 0
+          com += recv_command_prefix if recv_command_prefix.length > 0
+          if options[:mbuffer]
+            remcom = mbuffer_command + remcom
+          end
+          # single quote the entire remote command as passed to ssh
+          com.push("'#{remcom.join(' ')}'")
+        else
+          com += remcom
+        end
+
         $logger.debug(com.join(' '))
         system(com.join(' '))
         return
