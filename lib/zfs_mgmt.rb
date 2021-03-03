@@ -112,7 +112,7 @@ module ZfsMgmt
     end
   end
 
-  def self.zfsget(properties: ['name'],types: ['filesystem','volume'],zfs: '', command_prefix: [])
+  def self.zfsget(properties: ['all'],types: ['filesystem','volume'],zfs: '', command_prefix: [])
     results={}
     com = [ZfsMgmt.global_options[:zfs_binary], 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
     $logger.debug((command_prefix+com).join(' '))
@@ -240,7 +240,7 @@ module ZfsMgmt
     }
     return saved,saved_snaps,deleteme
   end
-  def self.zfs_managed_list(filter: '.+', properties: custom_properties(), property_match: { 'zfsmgmt:manage' => 'true' } )
+  def self.zfs_managed_list(filter: '.+', properties: ['all'], property_match: { 'zfsmgmt:manage' => 'true' } )
     zfss = [] # array of arrays
     zfsget(properties: properties).each do |zfs,props|
       unless /#{filter}/ =~ zfs
@@ -413,7 +413,7 @@ module ZfsMgmt
     begin
       recv_zfs = zfsget(zfs: destination_path,
                         command_prefix: recv_command_prefix(options,props),
-                        properties: ['receive_resume_token'],
+                        #properties: ['receive_resume_token'],
                        )
     rescue ZfsGetError
       $logger.debug("recv filesystem doesn't exist: #{destination_path}")
@@ -429,10 +429,13 @@ module ZfsMgmt
     if remote_zfs_state == 'missing'
       # the zfs does not exist, send initial (oldest?) snapshot
       com = []
-      com += zfs_send_com(options,[],sorted[0])
-      e = zfs_send_estimate(com) if options[:verbose] == 'pv'
+      com += zfs_send_com(options,
+                          props,
+                          [],
+                          ( options[:initial_snapshot] == 'newest' ? sorted[-1] : sorted[0] ),
+                         )
       com += mbuffer_command(options) if options[:mbuffer]
-      com += pv_command(options,e) if options[:verbose] == 'pv'
+      com += pv_command(options,zfs_send_com(options,props,[],sorted[0])) if options[:verbose] == 'pv'
       com += zfs_recv_com(options,[],props,destination_path)
  
       $logger.debug(com.join(' '))
@@ -499,9 +502,9 @@ module ZfsMgmt
       #pp rsnap,rsnap.sub(destination_path,zfs)
       #pp snaps
       if snaps.has_key?(rsnap.sub(destination_path,zfs))
-        $logger.debug("process #{rsnap} to #{sorted[0]}")
+        $logger.debug("process #{rsnap} to #{sorted[-1]}")
         com = []
-        com += zfs_send_com(options,[(options[:intermediary] ? '-I' : '-i'),dq(rsnap.split('@')[1])],sorted[-1])
+        com += zfs_send_com(options,props,[(options[:intermediary] ? '-I' : '-i'),dq(rsnap.split('@')[1])],sorted[-1])
         e = zfs_send_estimate(com) if options[:verbose] == 'pv'
         com += mbuffer_command(options) if options[:mbuffer]
         com += pv_command(options,e) if options[:verbose] == 'pv'
@@ -511,6 +514,7 @@ module ZfsMgmt
         system(com.join(' '))
         return
       end
+      $logger.debug("skipping remote snapshot #{rsnap} because the same snapshot doesn't exist locally #{rsnap.sub(destination_path,zfs)}")
     end
     $logger.error("receiving filesystem has no snapshots that still exists on the sending side, it must be destroyed: #{destination_path}")
     
@@ -522,22 +526,42 @@ module ZfsMgmt
     mbuffer_command.push('|')
     mbuffer_command
   end
-  def self.zfs_send_com(options,extra_opts,target)
+  def self.zfs_send_com(options,props,extra_opts,target)
     zfs_send_com = [ ZfsMgmt.global_options[:zfs_binary], 'send' ]
     zfs_send_com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
-    zfs_send_com.push('-h') if options[:holds]
-    zfs_send_com.push('-p') if options[:properties]
-    zfs_send_com.push('-w') if options[:raw]
-    zfs_send_com.push('-L') if options[:large_block]
-    zfs_send_com.push('-e') if options[:embed]
-    zfs_send_com.push('-c') if options[:compressed]
+    send_opts = {
+      'backup'      => '-b',
+      'compressed'  => '-c',
+      'embed'       => '-e',
+      'holds'       => '-h',
+      'large_block' => '-L',
+      'props'       => '-p',
+      'raw'         => '-w',
+      'replicate'   => '-R',
+    }
+    send_opts.each do |p,o|
+      if options.has_key?(p)
+        zfs_send_com.push(o) if options[p] == true
+      elsif props.has_key?("zfsmgmt:send_#{p}")
+        zfs_send_com.push(o) if props["zfsmgmt:send_#{p}"] == 'true'
+      end
+    end
     zfs_send_com + extra_opts + [dq(target),'|']
   end
   def self.zfs_recv_com(options,extra_opts,props,target)
     zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv', '-F', '-s' ]
-    zfs_recv_com.push('-n') if options[:noop]
-    zfs_recv_com.push('-h') if options[:drop_holds]
-    zfs_recv_com.push('-u') if options[:unmount]
+    recv_opts = {
+      'noop'       => '-n',
+      'drop_holds' => '-h',
+      'unmount'    => '-u',
+    }
+    recv_opts.each do |p,o|
+      if options.has_key?(p)
+        zfs_recv_com.push(o) if options[p] == true
+      elsif props.has_key?("zfsmgmt:recv_#{p}")
+        zfs_recv_com.push(o) if props["zfsmgmt:recv_#{p}"] == 'true'
+      end
+    end
     zfs_recv_com.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
     if options[:exclude]
       options[:exclude].each do |x|
