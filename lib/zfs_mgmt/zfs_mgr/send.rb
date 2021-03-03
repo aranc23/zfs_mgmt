@@ -20,7 +20,7 @@ class ZfsMgmt::ZfsMgr::Send < Thor
   method_option :holds, :aliases => :'-h', :desc => "pass the -h (--holds) option to zfs send", :type => :boolean
   method_option :large_block, :aliases => :'-L', :desc => "pass -L (--large-block) option to zfs send", :type => :boolean
   method_option :props, :aliases => :'-p', :desc => "pass -p (--props) option to zfs send", :type => :boolean
-  method_option :raw, :aliases => :'-w', :desc => "pass -w (--raw) option to zfs send", :default => false, :type => :boolean
+  method_option :raw, :aliases => :'-w', :desc => "pass -w (--raw) option to zfs send", :type => :boolean
   method_option :replicate, :aliases => :'-R', :desc => "pass -R (--replicate) option to zfs send", :type => :boolean
 
   method_option :noop, :aliases => :'-n', :desc => "pass -n (noop) option to zfs send", :type => :boolean
@@ -34,14 +34,21 @@ class ZfsMgmt::ZfsMgr::Send < Thor
   def all()
     ZfsMgmt.global_options = options
 
-    [{ 'zfsmgmt:send' => 'true' },
-     { 'zfsmgmt:send' => 'replicate',
-       'zfsmgmt:send@source' => 'local'
-     }].each do |match|
+    [
+      { 'zfsmgmt:send' => 'true' },
+      # {
+      #   'zfsmgmt:send' => 'replicate',
+      #   'zfsmgmt:send@source' => 'local'
+      # },
+    ].each do |match|
       ZfsMgmt.zfs_managed_list(filter: options[:filter],
                                property_match: match).each do |zfs,props,snaps|
         if props['zfsmgmt:send@source'] == 'received'
-          $logger.debug("skipping received filesystem")
+          $logger.debug("skipping received filesystem: #{zfs}")
+          next
+        end
+        if props.has_key?('zfsmgmt:send_replicate') and props['zfsmgmt:send_replicate'] == 'true' and props['zfsmgmt:send_replicate@source'] != 'local'
+          $logger.debug("skipping descendant of replicated filesystems: #{zfs}")
           next
         end
         unless props['zfsmgmt:destination']
