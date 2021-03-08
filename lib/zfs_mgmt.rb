@@ -429,13 +429,20 @@ module ZfsMgmt
     if remote_zfs_state == 'missing'
       # the zfs does not exist, send initial (oldest?) snapshot
       com = []
+      source = sorted[0]
+      if options[:initial_snapshot] == 'newest' or
+        ( options.has_key?('replicate') and options['replicate'] == true ) or
+        ( props.has_key?('zfsmgmt:send_replicate') and props['zfsmgmt:send_replicate'] == 'true' )
+        source = sorted[-1]
+      end
       com += zfs_send_com(options,
                           props,
                           [],
-                          ( options[:initial_snapshot] == 'newest' ? sorted[-1] : sorted[0] ),
+                          source,
                          )
+      e = zfs_send_estimate(com) if options[:verbose] == 'pv'
       com += mbuffer_command(options) if options[:mbuffer]
-      com += pv_command(options,zfs_send_com(options,props,[],sorted[0])) if options[:verbose] == 'pv'
+      com += pv_command(options,e) if options[:verbose] == 'pv'
       com += zfs_recv_com(options,[],props,destination_path)
  
       $logger.debug(com.join(' '))
