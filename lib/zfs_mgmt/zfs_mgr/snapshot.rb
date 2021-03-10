@@ -26,6 +26,6 @@ class ZfsMgmt::ZfsMgr::Snapshot < Thor
   def create()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
-    ZfsMgmt.snapshot_create(noop: options[:noop], verbopt: options[:verbose], filter: options[:filter])
+    ZfsMgmt.snapshot_create(noop: options[:noop], filter: options[:filter])
   end
 end
