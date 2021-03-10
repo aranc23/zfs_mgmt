@@ -22,6 +22,6 @@ class ZfsMgmt::ZfsMgr::Snapshot < Thor
   desc "create", "execute zfs snapshot based on zfs properties"
   def create()
     ZfsMgmt.global_options = options
-    ZfsMgmt.snapshot_create(verbopt: options[:verbose], debugopt: options[:debug], filter: options[:filter])
+    ZfsMgmt.snapshot_create(noop: options[:noop], verbopt: options[:verbose], debugopt: options[:debug], filter: options[:filter])
   end
 end
