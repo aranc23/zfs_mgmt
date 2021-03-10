@@ -351,7 +351,8 @@ module ZfsMgmt
     end
     res
   end
-  def self.snapshot_create(noop: false, verbopt: false, filter: '.+')
+  # snapshot all filesystems configured for snapshotting
+  def self.snapshot_create(noop: false, filter: '.+')
     dt = DateTime.now
     zfsget.select { |zfs,props|
       # must match filter
@@ -370,8 +371,17 @@ module ZfsMgmt
         com.push('-r')
       end
       com.push("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
-      $logger.info(com)
-      system(com.join(' ')) unless noop
+      system_com(com,noop)
+    end
+  end
+  def self.system_com(com, noop = false)
+    comstr = com.join(' ')
+    $logger.info(comstr)
+    unless noop
+      system(comstr)
+      unless $?.success?
+        $logger.error("command failed: #{$?.exitstatus}")
+      end
     end
   end
   def self.zfs_send(options,zfs,props,snaps)
