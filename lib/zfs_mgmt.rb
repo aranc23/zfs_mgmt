@@ -368,26 +368,25 @@ module ZfsMgmt
       $logger.level = Logger::INFO
     end
     dt = DateTime.now
-    zfsget(properties: custom_properties()).each do |zfs,props|
-      unless /#{filter}/ =~ zfs
-        next
+    zfsget.select { |zfs,props|
+      # must match filter
+      match_filter?(zfs: zfs, filter: filter) and
+        # snapshot must be on or true
+        (
+          key_comp?(props,'zfsmgmt:snapshot') or
+          # or snapshot can be recursive and local, but only if the source is local or received
+          ( key_comp?(props,'zfsmgmt:snapshot',['recursive','local']) and key_comp?(props,'zfsmgmt:snapshot@source',['local','received']) )
+        )
+    }.each do |zfs,props|
+      prefix = ( props.has_key?('zfsmgmt:snap_prefix') ? props['zfsmgmt:snap_prefix'] : 'zfsmgmt' )
+      ts = ( props.has_key?('zfsmgmt:snap_timestamp') ? props['zfsmgmt:snap_timestamp'] : '%FT%T%z' )
+      com = [global_options['zfs_binary'],'snapshot']
+      if key_comp?(props,'zfsmgmt:snapshot','recursive') and key_comp?(props,'zfsmgmt:snapshot@source',['local','received'])
+        com.push('-r')
       end
-      # zfs must have snapshot set to true or recursive
-      if props.has_key?('zfsmgmt:snapshot') and
-        props['zfsmgmt:snapshot'] == 'true' or
-        ( props['zfsmgmt:snapshot'] == 'recursive' and props['zfsmgmt:snapshot@source'] == 'local' ) or
-        ( props['zfsmgmt:snapshot'] == 'local' and props['zfsmgmt:snapshot@source'] == 'local' )
-        
-        prefix = ( props.has_key?('zfsmgmt:snap_prefix') ? props['zfsmgmt:snap_prefix'] : 'zfsmgmt' )
-        ts = ( props.has_key?('zfsmgmt:snap_timestamp') ? props['zfsmgmt:snap_timestamp'] : '%FT%T%z' )
-        com = [global_options['zfs_binary'],'snapshot']
-        if props['zfsmgmt:snapshot'] == 'recursive' and props['zfsmgmt:snapshot@source'] == 'local'
-          com.push('-r')
-        end
-        com.push("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
-        $logger.info(com)
-        system(com.join(' '))
-      end
+      com.push("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
+      $logger.info(com)
+      system(com.join(' ')) unless noop
     end
   end
   def self.zfs_send(options,zfs,props,snaps)
