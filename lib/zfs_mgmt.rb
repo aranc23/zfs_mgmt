@@ -9,7 +9,7 @@ require 'text-table'
 require 'open3'
 require 'filesize'
 
-$logger = Logger.new(STDERR)
+$logger = Logger.new(STDERR, progname: 'zfs_mgmt')
 
 $date_patterns = {
   'hourly' => '%F Hour %H',
@@ -263,12 +263,7 @@ module ZfsMgmt
     end
     return zfss
   end
-  def self.snapshot_policy(verbopt: false, debugopt: false, filter: '.+')
-    if debugopt
-      $logger.level = Logger::DEBUG
-    else
-      $logger.level = Logger::INFO
-    end
+  def self.snapshot_policy(verbopt: false, filter: '.+')
     zfs_managed_list(filter: filter).each do |zdata|
       (zfs,props,snaps) = zdata
       unless props.has_key?('zfsmgmt:policy') and policy_parser(props['zfsmgmt:policy'])
@@ -292,12 +287,7 @@ module ZfsMgmt
       print table.to_s
     end
   end
-  def self.snapshot_destroy(noop: false, verbopt: false, debugopt: false, filter: '.+')
-    if debugopt
-      $logger.level = Logger::DEBUG
-    else
-      $logger.level = Logger::INFO
-    end
+  def self.snapshot_destroy(noop: false, verbopt: false, filter: '.+')
     zfs_managed_list(filter: filter).each do |zdata|
       (zfs,props,snaps) = zdata
       unless props.has_key?('zfsmgmt:policy') and policy_parser(props['zfsmgmt:policy'])
@@ -361,12 +351,7 @@ module ZfsMgmt
     end
     res
   end
-  def self.snapshot_create(noop: false, verbopt: false, debugopt: false, filter: '.+')
-    if debugopt
-      $logger.level = Logger::DEBUG
-    else
-      $logger.level = Logger::INFO
-    end
+  def self.snapshot_create(noop: false, verbopt: false, filter: '.+')
     dt = DateTime.now
     zfsget.select { |zfs,props|
       # must match filter
@@ -647,6 +632,20 @@ module ZfsMgmt
       return v.call(h[p])
     else
       raise ArgumentError
+    end
+  end
+  def self.set_log_level(sev)
+    case sev
+    when 'debug'
+      $logger.level = Logger::DEBUG
+    when 'info'
+      $logger.level = Logger::INFO
+    when 'warn'
+      $logger.level = Logger::WARN
+    when 'error'
+      $logger.level = Logger::ERROR
+    when 'fatal'
+      $logger.level = Logger::FATAL
     end
   end
 end
