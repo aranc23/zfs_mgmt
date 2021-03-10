@@ -629,4 +629,25 @@ module ZfsMgmt
   def self.dq(s)
     "\"#{s}\""
   end
+  def self.prop_on?(v)
+    ['true','on'].include?(v)
+  end
+  def self.match_filter?(zfs:, filter:)
+    /#{filter}/ =~ zfs
+  end
+  def self.key_comp?(h,p,v = method(:prop_on?))
+    #$logger.debug("p:#{p}\th[p]:#{h[p]}\tv:#{v}")
+    return false unless h.has_key?(p)
+    if v.kind_of?(Array)
+      return v.include?(h[p])
+    elsif v.kind_of?(Hash)
+      return v.keys.include?(h[p])
+    elsif v.kind_of?(String)
+      return h[p] == v
+    elsif v.kind_of?(Method)
+      return v.call(h[p])
+    else
+      raise ArgumentError
+    end
+  end
 end
