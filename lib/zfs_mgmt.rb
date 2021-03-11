@@ -353,7 +353,7 @@ module ZfsMgmt
     dt = DateTime.now
     zfsget.select { |zfs,props|
       # must match filter
-      match_filter?(zfs: zfs, filter: filter) and
+      match_filter?(zfs, filter) and
         # snapshot must be on or true
         (
           key_comp?(props,'zfsmgmt:snapshot') or
@@ -619,7 +619,7 @@ module ZfsMgmt
   def self.prop_on?(v)
     ['true','on'].include?(v)
   end
-  def self.match_filter?(zfs:, filter:)
+  def self.match_filter?(zfs, filter)
     /#{filter}/ =~ zfs
   end
   def self.key_comp?(h,p,v = method(:prop_on?))
