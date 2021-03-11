@@ -498,7 +498,15 @@ module ZfsMgmt
       if snaps.has_key?(rsnap.sub(destination_path,zfs))
         $logger.debug("process #{rsnap} to #{sorted[-1]}")
         com = []
-        com += zfs_send_com(options,props,[(options[:intermediary] ? '-I' : '-i'),dq(rsnap.split('@')[1])],sorted[-1])
+        i_opt = '-i'
+        # allow the command line option for intermediary to override the property
+        if key_comp?(options,'intermediary',[true,false])
+          i_opt = '-I' if key_comp?(options, 'intermediary', true)
+        elsif key_comp?(props, 'zfsmgmt:send_intermediary')
+          i_opt = '-I'
+        end
+
+        com += zfs_send_com(options,props,[i_opt, dq('@' + rsnap.split('@')[1])], sorted[-1])
         e = zfs_send_estimate(com) if options[:verbose] == 'pv'
         com += mbuffer_command(options) if options[:mbuffer]
         com += pv_command(options,e) if options[:verbose] == 'pv'
@@ -533,7 +541,10 @@ module ZfsMgmt
       'replicate'   => '-R',
     }
     send_opts.each do |p,o|
-      if key_comp?(options,p,true) or key_comp?(props,"zfsmgmt:send_#{p}")
+      # allow the command line options to override the properties value
+      if key_comp?(options,p,[true,false])
+        zfs_send_com.push(o) if key_comp?(options,p,true)
+      elsif key_comp?(props,"zfsmgmt:send_#{p}")
         zfs_send_com.push(o)
       end
     end
@@ -549,7 +560,10 @@ module ZfsMgmt
       #'discard_first' => '-d',
     }
     recv_opts.each do |p,o|
-      if key_comp?(options,p,true) or key_comp?(props,"zfsmgmt:recv_#{p}")
+      # allow the command line options to override the properties value
+      if key_comp?(options,p,[true,false])
+        zfs_recv_com.push(o) if key_comp?(options,p,true)
+      elsif key_comp?(props,"zfsmgmt:recv_#{p}")
         zfs_recv_com.push(o)
       end
     end
