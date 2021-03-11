@@ -35,29 +35,6 @@ class ZfsMgmt::ZfsMgr::Send < Thor
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
 
-    [
-      { 'zfsmgmt:send' => 'true' },
-      # {
-      #   'zfsmgmt:send' => 'replicate',
-      #   'zfsmgmt:send@source' => 'local'
-      # },
-    ].each do |match|
-      ZfsMgmt.zfs_managed_list(filter: options[:filter],
-                               property_match: match).each do |zfs,props,snaps|
-        if props['zfsmgmt:send@source'] == 'received'
-          $logger.debug("skipping received filesystem: #{zfs}")
-          next
-        end
-        if props.has_key?('zfsmgmt:send_replicate') and props['zfsmgmt:send_replicate'] == 'true' and props['zfsmgmt:send_replicate@source'] != 'local'
-          $logger.debug("skipping descendant of replicated filesystems: #{zfs}")
-          next
-        end
-        unless props['zfsmgmt:destination']
-          $logger.error("#{zfs}: you must specify a destination zfs path via the user property zfsmgmt:destination, even if using --destination on the command line, skipping")
-          next
-        end
-        ZfsMgmt.zfs_send(options,zfs,props,snaps)
-      end
-    end
+    ZfsMgmt.zfs_send_all(options)
   end
 end

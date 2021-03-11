@@ -652,4 +652,23 @@ module ZfsMgmt
       $logger.level = Logger::FATAL
     end
   end
+  def self.zfs_send_all(options)
+    zfs_managed_list(filter: options[:filter],
+                     property_match: { 'zfsmgmt:send' => method(:prop_on?) }).each do |zfs,props,snaps|
+      
+      if props['zfsmgmt:send@source'] == 'received'
+        $logger.debug("skipping received filesystem: #{zfs}")
+        next
+      end
+      if key_comp?(props,'zfsmgmt:send_replicate') and props['zfsmgmt:send_replicate@source'] != 'local'
+        $logger.debug("skipping descendant of replicated filesystems: #{zfs}")
+        next
+      end
+      unless props['zfsmgmt:destination']
+        $logger.error("#{zfs}: you must specify a destination zfs path via the user property zfsmgmt:destination, even if using --destination on the command line, skipping")
+        next
+      end
+      zfs_send(options,zfs,props,snaps)
+    end
+  end
 end
