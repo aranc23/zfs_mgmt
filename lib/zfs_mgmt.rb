@@ -349,7 +349,7 @@ module ZfsMgmt
     res
   end
   # snapshot all filesystems configured for snapshotting
-  def self.snapshot_create(noop: false, verbose: false, filter: '.+')
+  def self.snapshot_create(noop: false, filter: '.+')
     dt = DateTime.now
     zfsget.select { |zfs,props|
       # must match filter
@@ -367,7 +367,6 @@ module ZfsMgmt
       if key_comp?(props,'zfsmgmt:snapshot','recursive') and key_comp?(props,'zfsmgmt:snapshot@source',['local','received'])
         com.push('-r')
       end
-      com.push('-v') if verbose
       com.push("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
       system_com(com,noop)
     end

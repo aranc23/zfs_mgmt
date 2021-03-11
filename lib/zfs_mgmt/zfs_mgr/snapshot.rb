@@ -22,11 +22,9 @@ class ZfsMgmt::ZfsMgr::Snapshot < Thor
   desc "create", "execute zfs snapshot based on zfs properties"
   method_option :noop, :type => :boolean, :default => false,
                 :desc => 'log snapshot commands without running zfs snapshot'
-  method_option :verbose, :type => :boolean, :default => false,
-                :desc => 'pass -v option to zfs commands'
   def create()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
-    ZfsMgmt.snapshot_create(noop: options[:noop], verbose: options[:verbose], filter: options[:filter])
+    ZfsMgmt.snapshot_create(noop: options[:noop], filter: options[:filter])
   end
 end
