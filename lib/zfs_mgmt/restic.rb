@@ -18,7 +18,7 @@ module ZfsMgmt::Restic
       com.push( '--repo', props['zfsmgmt:restic_repository'] )
     end
 
-    $logger.debug("#{com.join(' ')}")
+    $logger.info("#{com.join(' ')}")
     restic_output = %x(#{com.join(' ')})
     unless $?.success?
       $logger.error("unable to query the restic database")
@@ -143,8 +143,7 @@ module ZfsMgmt::Restic
       unless ZfsMgmt.zfs_holds(last_zfs_snapshot).include?('zfsmgmt_restic')
         ZfsMgmt.zfs_hold('zfsmgmt_restic',last_zfs_snapshot)
       end
-      $logger.info("#{com.join(' ')}")
-      system(com.join(' '))
+      ZfsMgmt.system_com(com)
       chain_snaps = chain.map do |rsnap|
         rsnap['zfsmgmt:snapshot']
       end
