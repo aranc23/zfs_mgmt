@@ -263,7 +263,7 @@ module ZfsMgmt
     end
     return zfss
   end
-  def self.snapshot_policy(verbopt: false, filter: '.+')
+  def self.snapshot_policy(filter: '.+')
     zfs_managed_list(filter: filter).each do |zfs,props,snaps|
       unless props.has_key?('zfsmgmt:policy')
         $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no policy configuration in zfsmgmt:policy, skipping")
@@ -292,7 +292,7 @@ module ZfsMgmt
       print table.to_s
     end
   end
-  def self.snapshot_destroy(noop: false, verbopt: false, filter: '.+')
+  def self.snapshot_destroy(noop: false, verbose: false, filter: '.+')
     zfs_managed_list(filter: filter).each do |zfs,props,snaps|
       unless props.has_key?('zfsmgmt:policy')
         $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no policy configuration in zfsmgmt:policy, skipping")
@@ -313,16 +313,10 @@ module ZfsMgmt
         $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
       end
 
-      com_base = ["zfs destroy"]
-      if deleteme.length > 0
-        com_base.push('-d')
-      end
-      if noop
-        com_base.push('-n')
-      end
-      if verbopt
-        com_base.push('-v')
-      end
+      com_base = ['zfs', 'destroy']
+      com_base.push('-d') if deleteme.length > 0 # why?
+      com_base.push('-n') if noop
+      com_base.push('-v') if verbose
       while deleteme.length > 0
         for i in 0..(deleteme.length - 1) do
           max = deleteme.length - 1 - i
@@ -333,9 +327,8 @@ module ZfsMgmt
           if bigarg.length >= 131072 or com.length >= (2097152-10000)
             next
           end
-          $logger.info(com)
           deleteme = deleteme - deleteme[0..max]
-          system_com(com,noop)
+          system_com(com) # pass -n, always run the command though
           break
         end
       end
@@ -358,7 +351,7 @@ module ZfsMgmt
     res
   end
   # snapshot all filesystems configured for snapshotting
-  def self.snapshot_create(noop: false, filter: '.+')
+  def self.snapshot_create(noop: false, verbose: false, filter: '.+')
     dt = DateTime.now
     zfsget.select { |zfs,props|
       # must match filter
@@ -376,6 +369,7 @@ module ZfsMgmt
       if key_comp?(props,'zfsmgmt:snapshot','recursive') and key_comp?(props,'zfsmgmt:snapshot@source',['local','received'])
         com.push('-r')
       end
+      com.push('-v') if verbose
       com.push("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
       system_com(com,noop)
     end

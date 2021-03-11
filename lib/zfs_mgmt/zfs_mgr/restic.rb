@@ -19,17 +19,20 @@ class ZfsMgmt::ZfsMgr::Backup < Thor
   method_option :level, :desc => "backup level in integer form", :default => 2, :type => :numeric
   method_option :intermediary, :alias => '-I', :desc => "pass -I (intermediary) option to zfs send", :default => false, :type => :boolean
   def incremental()
+    ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
     ZfsMgmt::Restic.backup(backup_level: options[:level], options: options)
   end
   desc "differential", "perform differential backup"
   method_option :intermediary, :alias => '-I', :desc => "pass -I (intermediary) option to zfs send", :default => false, :type => :boolean
   def differential()
+    ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
     ZfsMgmt::Restic.backup(backup_level: 1, options: options)
   end
   desc "full", "perform full backup"
   def full()
+    ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
     ZfsMgmt::Restic.backup(backup_level: 0, options: options)
   end

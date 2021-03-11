@@ -7,6 +7,7 @@ class ZfsMgmt::ZfsMgr::List < Thor
   method_option :age, :desc => "timeframe outside of which the zfs will be considered stale", :default => '1d'
   method_option :format, :desc => "output format", :type => :string, :enum => ['table','tab'], :default => 'table'
   def stale()
+    ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
     cutoff = Time.at(Time.now.to_i -  ZfsMgmt.timespec_to_seconds(options[:age]))
     table = Text::Table.new
@@ -30,6 +31,7 @@ class ZfsMgmt::ZfsMgr::List < Thor
   desc "holds", "list all holds on snapshots"
   method_option :format, :desc => "output format", :type => :string, :enum => ['table','tab','release'], :default => 'table'
   def holds()
+    ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
     table = Text::Table.new
     table.head = ['snapshot','userrefs','holds']

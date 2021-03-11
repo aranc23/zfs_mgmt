@@ -32,6 +32,7 @@ class ZfsMgmt::ZfsMgr::Send < Thor
   method_option :mbuffer, :desc => "insert mbuffer between send and recv", :default => true, :type => :boolean
   method_option :mbuffer_size, :desc => "passed to mbuffer -s option", :type => :string
   def all()
+    ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
 
     [
