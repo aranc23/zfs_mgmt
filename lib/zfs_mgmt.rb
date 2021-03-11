@@ -290,9 +290,16 @@ module ZfsMgmt
   def self.snapshot_destroy(noop: false, verbopt: false, filter: '.+')
     zfs_managed_list(filter: filter).each do |zdata|
       (zfs,props,snaps) = zdata
-      unless props.has_key?('zfsmgmt:policy') and policy_parser(props['zfsmgmt:policy'])
-        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
+      unless props.has_key?('zfsmgmt:policy')
+        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no policy configuration in zfsmgmt:policy, skipping")
         next # zfs
+      end
+
+      begin
+        p = policy_parser(props['zfsmgmt:policy'])
+      rescue ArgumentError
+        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
+        next
       end
 
       # call the function that decides who to save and who to delete
@@ -304,32 +311,29 @@ module ZfsMgmt
         $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
       end
 
-      com_base = "zfs destroy -p"
+      com_base = ["zfs destroy"]
       if deleteme.length > 0
-        com_base = "#{com_base}d"
+        com_base.push('-d')
       end
       if noop
-        com_base = "#{com_base}n"
+        com_base.push('-n')
       end
       if verbopt
-        com_base = "#{com_base}v"
+        com_base.push('-v')
       end
       while deleteme.length > 0
         for i in 0..(deleteme.length - 1) do
           max = deleteme.length - 1 - i
           $logger.debug("attempting to remove snaps 0 through #{max} out of #{deleteme.length} snapshots")
           bigarg = "#{zfs}@#{deleteme[0..max].map { |s| s.split('@')[1] }.join(',')}"
-          com = "#{com_base} #{bigarg}"
+          com = com_base + [bigarg]
           $logger.debug("size of bigarg: #{bigarg.length} size of com: #{com.length}")
           if bigarg.length >= 131072 or com.length >= (2097152-10000)
             next
           end
           $logger.info(com)
           deleteme = deleteme - deleteme[0..max]
-          system(com)
-          if $?.exitstatus != 0
-            $logger.error("zfs exited with non-zero status: #{$?.exitstatus}")
-          end
+          system_com(com,noop)
           break
         end
       end
@@ -343,7 +347,7 @@ module ZfsMgmt
     end
     p = str.scan(/\d+[#{$time_pattern_map.keys.join('')}]/i)
     unless p.length > 0
-      raise "unable to parse the policy configuration #{str}"
+      raise ArgumentError.new("unable to parse the policy configuration #{str}")
     end
     p.each do |pi|
       scn = /(\d+)([#{$time_pattern_map.keys.join('')}])/i.match(pi)
