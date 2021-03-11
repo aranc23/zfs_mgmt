@@ -70,7 +70,7 @@ module ZfsMgmt::Restic
                                           'zfsmgmt:restic_repository',
                                           'userrefs',
                                          ],
-                             property_match: { 'zfsmgmt:restic_backup' => 'true' }).each do |blob|
+                             property_match: { 'zfsmgmt:restic_backup' => ['on','true'] }).each do |blob|
       zfs,props,zfs_snapshots = blob
       last_zfs_snapshot = zfs_snapshots.keys.sort { |a,b| zfs_snapshots[a]['creation'] <=> zfs_snapshots[b]['creation'] }.last
       zfs_snap_time = Time.at(zfs_snapshots[last_zfs_snapshot]['creation'])

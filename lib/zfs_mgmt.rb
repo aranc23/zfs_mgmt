@@ -238,7 +238,7 @@ module ZfsMgmt
     }
     return saved,saved_snaps,deleteme
   end
-  def self.zfs_managed_list(filter: '.+', properties: ['all'], property_match: { 'zfsmgmt:manage' => 'true' } )
+  def self.zfs_managed_list(filter: '.+', properties: ['all'], property_match: { 'zfsmgmt:manage' => method(:prop_on?) } )
     zfss = [] # array of arrays
     zfsget(properties: properties).each do |zfs,props|
       unless /#{filter}/ =~ zfs
@@ -246,7 +246,7 @@ module ZfsMgmt
       end
       managed = true
       property_match.each do |k,v|
-        unless props.has_key?(k) and props[k] == v
+        unless key_comp?(props,k,v)
           managed = false
           break
         end
