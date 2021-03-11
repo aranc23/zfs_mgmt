@@ -646,6 +646,8 @@ module ZfsMgmt
       return h[p] == v
     elsif v.kind_of?(Method)
       return v.call(h[p])
+    elsif v.kind_of?(Regexp)
+      return v =~ h[p]
     else
       raise ArgumentError
     end
