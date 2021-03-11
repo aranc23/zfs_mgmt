@@ -264,14 +264,19 @@ module ZfsMgmt
     return zfss
   end
   def self.snapshot_policy(verbopt: false, filter: '.+')
-    zfs_managed_list(filter: filter).each do |zdata|
-      (zfs,props,snaps) = zdata
-      unless props.has_key?('zfsmgmt:policy') and policy_parser(props['zfsmgmt:policy'])
-        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
+    zfs_managed_list(filter: filter).each do |zfs,props,snaps|
+      unless props.has_key?('zfsmgmt:policy')
+        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no policy configuration in zfsmgmt:policy, skipping")
         next # zfs
       end
-      # call the function that decides who to save and who to delete
-      (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs,props,snaps)
+
+      begin
+        # call the function that decides who to save and who to delete
+        (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs,props,snaps)
+      rescue ArgumentError
+        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
+        next
+      end
 
       if saved_snaps.length == 0
         $logger.info("no snapshots marked as saved by policy for #{zfs}")
