@@ -92,8 +92,7 @@ module ZfsMgmt
 
   def self.zfs_hold(hold,snapshot)
     com = [global_options['zfs_binary'], 'hold', hold, snapshot]
-    $logger.debug("#{com.join(' ')}")
-    system(com.join(' '))
+    system_com(com)
     unless $?.success?
       errstr = "unable to set hold: #{hold} for snapshot: #{snapshot}"
       $logger.error(errstr)
@@ -103,8 +102,7 @@ module ZfsMgmt
 
   def self.zfs_release(hold,snapshot)
     com = [@global_options['zfs_binary'], 'release', hold, snapshot]
-    $logger.debug("#{com.join(' ')}")
-    system(com.join(' '))
+    system_com(com)
     unless $?.success?
       errstr = "unable to release hold: #{hold} for snapshot: #{snapshot}"
       $logger.error(errstr)
@@ -439,10 +437,8 @@ module ZfsMgmt
       com += pv_command(options,e) if options[:verbose] == 'pv'
       com += zfs_recv_com(options,[],props,destination_path)
  
-      $logger.debug(com.join(' '))
-      system(com.join(' '))
+      system_com(com)
       unless $?.success?
-        $logger.error("initial send failed: #{$?.exitstatus}")
         return
       end
 
@@ -471,10 +467,8 @@ module ZfsMgmt
 
       com += recv
 
-      $logger.debug(com.join(' '))
-      system(com.join(' '))
+      system_com(com)
       unless $?.success?
-        $logger.error("resume failed: #{$?.exitstatus}")
         return
       end
     end
@@ -510,9 +504,8 @@ module ZfsMgmt
         com += mbuffer_command(options) if options[:mbuffer]
         com += pv_command(options,e) if options[:verbose] == 'pv'
         com += zfs_recv_com(options,[],props,destination_path)
- 
-        $logger.debug(com.join(' '))
-        system(com.join(' '))
+
+        system_com(com)
         return
       end
       $logger.debug("skipping remote snapshot #{rsnap} because the same snapshot doesn't exist locally #{rsnap.sub(destination_path,zfs)}")
