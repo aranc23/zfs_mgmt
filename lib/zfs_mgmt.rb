@@ -422,8 +422,8 @@ module ZfsMgmt
       com = []
       source = sorted[0]
       if options[:initial_snapshot] == 'newest' or
-        ( options.has_key?('replicate') and options['replicate'] == true ) or
-        ( props.has_key?('zfsmgmt:send_replicate') and props['zfsmgmt:send_replicate'] == 'true' )
+        key_comp?(options, 'replicate') or
+        key_comp?(props, 'zfsmgmt:send_replcate')
         source = sorted[-1]
       end
       com += zfs_send_com(options,
@@ -445,7 +445,7 @@ module ZfsMgmt
       # should be resumable!
       com = [ ]
       com.push( ZfsMgmt.global_options[:zfs_binary], 'send', '-t', remote_zfs_state )
-      com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
+      com.push('-v','-P') if key_comp?(options, 'verbose', 'send')
       com.push('|')
       e = zfs_send_estimate(com) if options[:verbose] == 'pv'
       com += mbuffer_command(options) if options[:mbuffer]
@@ -521,7 +521,7 @@ module ZfsMgmt
   end
   def self.zfs_send_com(options,props,extra_opts,target)
     zfs_send_com = [ ZfsMgmt.global_options[:zfs_binary], 'send' ]
-    zfs_send_com.push('-v','-P') if options[:verbose] and options[:verbose] == 'send'
+    zfs_send_com.push('-v','-P') if key_comp?(options,'verbose','send')
     send_opts = {
       'backup'      => '-b',
       'compressed'  => '-c',
@@ -533,10 +533,8 @@ module ZfsMgmt
       'replicate'   => '-R',
     }
     send_opts.each do |p,o|
-      if options.has_key?(p)
-        zfs_send_com.push(o) if options[p] == true
-      elsif props.has_key?("zfsmgmt:send_#{p}")
-        zfs_send_com.push(o) if props["zfsmgmt:send_#{p}"] == 'true'
+      if key_comp?(options,p,true) or key_comp?(props,"zfsmgmt:send_#{p}")
+        zfs_send_com.push(o)
       end
     end
     zfs_send_com + extra_opts + [dq(target),'|']
@@ -544,18 +542,18 @@ module ZfsMgmt
   def self.zfs_recv_com(options,extra_opts,props,target)
     zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv', '-F', '-s' ]
     recv_opts = {
-      'noop'       => '-n',
-      'drop_holds' => '-h',
-      'unmount'    => '-u',
+      'noop'          => '-n',
+      'drop_holds'    => '-h',
+      'unmount'       => '-u',
+      #'discard_last'  => '-e',
+      #'discard_first' => '-d',
     }
     recv_opts.each do |p,o|
-      if options.has_key?(p)
-        zfs_recv_com.push(o) if options[p] == true
-      elsif props.has_key?("zfsmgmt:recv_#{p}")
-        zfs_recv_com.push(o) if props["zfsmgmt:recv_#{p}"] == 'true'
+      if key_comp?(options,p,true) or key_comp?(props,"zfsmgmt:recv_#{p}")
+        zfs_recv_com.push(o)
       end
     end
-    zfs_recv_com.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
+    zfs_recv_com.push('-v') if key_comp?(options, 'verbose', ['receive', 'recv'])
     if options[:exclude]
       options[:exclude].each do |x|
         zfs_recv_com.push('-x',x)
@@ -628,14 +626,13 @@ module ZfsMgmt
       return v.include?(h[p])
     elsif v.kind_of?(Hash)
       return v.keys.include?(h[p])
-    elsif v.kind_of?(String)
-      return h[p] == v
     elsif v.kind_of?(Method)
       return v.call(h[p])
     elsif v.kind_of?(Regexp)
       return v =~ h[p]
     else
-      raise ArgumentError
+      # string, boolean, numbers?
+      return h[p] == v
     end
   end
   def self.set_log_level(sev)
