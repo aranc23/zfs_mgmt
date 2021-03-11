@@ -12,8 +12,7 @@ class ZfsMgmt::ZfsMgr::List < Thor
     table = Text::Table.new
     table.head = ['zfs','snapshot','age']
     table.rows = []
-    ZfsMgmt.zfs_managed_list(filter: options[:filter]).each do |blob|
-      zfs,props,snaps = blob
+    ZfsMgmt.zfs_managed_list(filter: options[:filter]).each do |zfs,props,snap|
       last = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }.last
       snap_time = Time.at(snaps[last]['creation'])
       if snap_time < cutoff
