@@ -311,7 +311,7 @@ module ZfsMgmt
         $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
       end
 
-      com_base = ['zfs', 'destroy']
+      com_base = [ZfsMgmt.global_options[:zfs_binary], 'destroy']
       com_base.push('-d') if deleteme.length > 0 # why?
       com_base.push('-n') if noop
       com_base.push('-v') if verbose
