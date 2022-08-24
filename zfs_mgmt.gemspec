@@ -36,11 +36,11 @@ Gem::Specification.new do |spec|
   spec.executables   = ['readsnaps','zfssendman','zfssnapman','zfsrecvman','zfs-list-snapshots','zfsmgr']
   spec.require_paths = ["lib"]
 
-  spec.add_development_dependency "bundler", "~> 1.16"
+  spec.add_development_dependency "bundler", ">= 2.2.33"
   spec.add_development_dependency "rake", ">= 12.3.3"
   spec.add_development_dependency "rspec", "~> 3.0"
-  spec.add_development_dependency "thor", "~> 1.0"
-  spec.add_development_dependency "text-table", "~> 1.2"
-  spec.add_development_dependency "filesize", "~> 0.2"
+  spec.add_runtime_dependency "thor", "~> 1.0"
+  spec.add_runtime_dependency "text-table", "~> 1.2"
+  spec.add_runtime_dependency "filesize", "~> 0.2"
   
 end
