@@ -423,7 +423,7 @@ module ZfsMgmt
       source = sorted[0]
       if options[:initial_snapshot] == 'newest' or
         key_comp?(options, 'replicate') or
-        key_comp?(props, 'zfsmgmt:send_replcate')
+        key_comp?(props, 'zfsmgmt:send_replicate')
         source = sorted[-1]
       end
       com += zfs_send_com(options,
