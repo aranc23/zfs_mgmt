@@ -17,7 +17,7 @@ class ZfsMgr < Thor
                :enum => ['debug','error','fatal','info','warn'],
                :desc => 'set logging level to specified severity'
   desc "zfsget [ZFS]", "execute zfs get for the given properties and types and parse the output into a nested hash"
-  method_option :properties, :type => :array, :default => ['name'], :desc => "List of properties passed to zfs get"
+  method_option :properties, :type => :string, :default => ['name'], :desc => "List of properties passed to zfs get", repeatable: true
   method_option :types,      :type => :array, :default => ['filesystem','volume'], enum: ['filesystem','volume','snapshot'], :desc => "list of types"
   def zfsget(zfs)
     ZfsMgmt.set_log_level(options[:loglevel])

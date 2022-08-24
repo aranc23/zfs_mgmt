@@ -25,8 +25,8 @@ class ZfsMgmt::ZfsMgr::Send < Thor
 
   method_option :noop, :aliases => :'-n', :desc => "pass -n (noop) option to zfs send", :type => :boolean
   method_option :unmount, :aliases => :'-u', :desc => "pass -u (unmount) option to zfs receive", :type => :boolean
-  method_option :exclude, :aliases => :'-x', :desc => "passed to -x option of receive side", :type => :array
-  method_option :option, :aliases => :'-o', :desc => "passed to -o option of receive side", :type => :array
+  method_option :exclude, :aliases => :'-x', :desc => "passed to -x option of receive side", :type => :string, repeatable: true
+  method_option :option, :aliases => :'-o', :desc => "passed to -o option of receive side", :type => :string, repeatable: true
   method_option :drop_holds, :desc => "pass the -h option to zfs recv, indicating holds should be ignored", :type => :boolean
 
   method_option :mbuffer, :desc => "insert mbuffer between send and recv", :default => true, :type => :boolean
