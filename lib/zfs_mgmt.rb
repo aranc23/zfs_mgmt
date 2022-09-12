@@ -603,10 +603,16 @@ module ZfsMgmt
     lcom.push('2>&1')
     lcom = precom + lcom
     $logger.debug(lcom.join(' '))
+    total = 0
     %x[#{lcom.join(' ')}].each_line do |l|
-      if m = /(incremental|size).*\s+(\d+)$/.match(l)
-        return m[2].to_i
+      if m = /^size\s+(\d+)$/.match(l)
+        return m[1].to_i
+      elsif m = /^incremental\s+.+?\s+.+?\s+(\d+)$/.match(l)
+        total = total + m[1].to_i
       end
+    end
+    if total > 0
+      return total
     end
     $logger.error("no estimate available")
     return nil
