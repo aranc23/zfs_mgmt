@@ -7,4 +7,5 @@ gem "thor"
 gem "text-table"
 gem "filesize"
 gem "json"
+gem "timeout"
 gemspec

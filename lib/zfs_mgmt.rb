@@ -8,6 +8,7 @@ require 'logger'
 require 'text-table'
 require 'open3'
 require 'filesize'
+require 'timeout'
 
 $logger = Logger.new(STDERR, progname: 'zfs_mgmt')
 
@@ -36,6 +37,8 @@ $properties_xlate = {
   'userrefs' => ->(x) { x.to_i },
   'creation' => ->(x) { x.to_i },
 }
+
+$lock = nil
 
 module ZfsMgmt
   class << self
@@ -291,6 +294,9 @@ module ZfsMgmt
     end
   end
   def self.snapshot_destroy(noop: false, verbose: false, filter: '.+')
+    unless lock(options)
+      exit(1)
+    end
     zfs_managed_list(filter: filter).each do |zfs,props,snaps|
       unless props.has_key?('zfsmgmt:policy')
         $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no policy configuration in zfsmgmt:policy, skipping")
@@ -331,6 +337,7 @@ module ZfsMgmt
         end
       end
     end
+    unlock()  
   end
   # parse a policy string into a hash of integers
   def self.policy_parser(str)
@@ -350,6 +357,10 @@ module ZfsMgmt
   end
   # snapshot all filesystems configured for snapshotting
   def self.snapshot_create(noop: false, filter: '.+')
+    unless lock(options)
+      exit(1)
+    end
+
     dt = DateTime.now
     zfsget.select { |zfs,props|
       # must match filter
@@ -370,6 +381,7 @@ module ZfsMgmt
       com.push("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
       system_com(com,noop)
     end
+    unlock()
   end
   def self.system_com(com, noop = false)
     comstr = com.join(' ')
@@ -670,6 +682,9 @@ module ZfsMgmt
     end
   end
   def self.zfs_send_all(options)
+    unless lock(options)
+      exit(1)
+    end
     zfs_managed_list(filter: options[:filter],
                      property_match: { 'zfsmgmt:send' => method(:prop_on?) }).each do |zfs,props,snaps|
       
@@ -686,6 +701,33 @@ module ZfsMgmt
         next
       end
       zfs_send(options,zfs,props,snaps)
+    end
+    unlock()
+  end
+  def self.lock(options)
+    # open lock file, try to lock file until lock_wait has expired or
+    # lock is obtained, write pid?
+    return true unless options[:lock]
+    $lock = File.open(options[:lock_file], File::RDWR|File::CREAT, 0644)
+    if options[:lock_wait] > 0
+      status = Timeout::timeout(options[:lock_wait]) do
+        if $lock.flock(File::LOCK_EX)
+          return true
+        end
+      end
+    else
+      # zero is wait forever!
+      if $lock.flock(File::LOCK_EX)
+        return true
+      end
+    end
+    $logger.error("unable to obtain lock")
+    return false
+  end
+  def self.unlock()
+    unless $lock.nil?
+      $lock.flock(File::LOCK_UN)
+      $lock.close()
     end
   end
 end

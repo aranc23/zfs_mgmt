@@ -16,6 +16,12 @@ class ZfsMgr < Thor
   class_option :loglevel, :type => :string, :default => ( $stdout.isatty ? 'info' : 'warn' ),
                :enum => ['debug','error','fatal','info','warn'],
                :desc => 'set logging level to specified severity'
+  class_option :lock, :type => :boolean, :default => false,
+               :desc => 'lock before running'
+  class_option :lock_file, :type => :string, :default => '/run/zfsmgr.lock',
+               :desc => 'lock file'
+  class_option :lock_wait, :type => :numeric, :default => 0,
+               :desc => 'wait N seconds for lock'
   desc "zfsget [ZFS]", "execute zfs get for the given properties and types and parse the output into a nested hash"
   method_option :properties, :type => :string, :default => ['name'], :desc => "List of properties passed to zfs get", repeatable: true
   method_option :types,      :type => :array, :default => ['filesystem','volume'], enum: ['filesystem','volume','snapshot'], :desc => "list of types"
