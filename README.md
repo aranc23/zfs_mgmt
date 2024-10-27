@@ -4,8 +4,8 @@ zfs_mgmt aims to provide some useful helpers for managing zfs
 snapshots, and eventually send/recv duties via the zfsmgr script in
 bin/.
 
-Currently only snapshot destruction is implemented by a policy
-specification stored in zfs properties.
+Snapshot creation and deletion by policy along with zfs send wrapping
+are implementation by specifications stored in zfs properties.
 
 ## Installation
 
