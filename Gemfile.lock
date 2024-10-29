@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    zfs_mgmt (0.4.7)
+    zfs_mgmt (0.4.8)
       filesize (~> 0.2)
       text-table (~> 1.2)
       thor (~> 1.0)
@@ -28,6 +28,7 @@ GEM
     rspec-support (3.11.0)
     text-table (1.2.4)
     thor (1.2.1)
+    timeout (0.4.1)
 
 PLATFORMS
   x86_64-linux
@@ -40,6 +41,7 @@ DEPENDENCIES
   rspec (~> 3.0)
   text-table
   thor
+  timeout
   zfs_mgmt!
 
 BUNDLED WITH
