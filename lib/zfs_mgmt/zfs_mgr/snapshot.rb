@@ -11,7 +11,9 @@ class ZfsMgmt::ZfsMgr::Snapshot < Thor
   def destroy()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    lock = ZfsMgmt.lock(options)
     ZfsMgmt.snapshot_destroy(noop: options[:noop], verbose: options[:verbose], filter: options[:filter])
+    ZfsMgmt.unlock(lock)
   end
   desc "policy", "print the policy table for zfs"
   def policy()
@@ -25,6 +27,7 @@ class ZfsMgmt::ZfsMgr::Snapshot < Thor
   def create()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    lock = ZfsMgmt.lock(options)
     ZfsMgmt.snapshot_create(noop: options[:noop], filter: options[:filter])
   end
 end
