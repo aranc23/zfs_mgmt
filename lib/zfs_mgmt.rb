@@ -257,7 +257,7 @@ module ZfsMgmt
       next unless managed
       snaps = self.zfsget(properties: ['name','creation','userrefs','used','written','referenced'],types: ['snapshot'], zfs: zfs)
       if snaps.length == 0
-        $logger.warn("unable to process this zfs, no snapshots at all: #{zfs}")
+        $logger.debug("not processing #{zfs} as there are no snapshots")
         next
       end
       zfss.push([zfs,props,snaps])
@@ -701,6 +701,13 @@ module ZfsMgmt
       $logger.error("unable to open lock file (#{options[:lock_file]}), possibly the directory doesn't exist")
       raise
     end
+    if lock.flock(File::LOCK_EX|File::LOCK_NB)
+      lock.flock(File::LOCK_UN)
+    else
+      # we failed to lock so locked without NB is likely to block for some amount of time
+      $logger.info("attempting to lock control file, this may block")
+    end
+
     if options[:lock_wait] > 0
       begin
         status = Timeout::timeout(options[:lock_wait]) do
