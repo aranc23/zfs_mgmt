@@ -8,4 +8,6 @@ gem "text-table"
 gem "filesize"
 gem "json"
 gem "timeout"
+
+gem 'solargraph', group: :development
 gemspec
