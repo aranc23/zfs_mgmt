@@ -1,3 +1,3 @@
 module ZfsMgmt
-  VERSION = "0.4.9"
+  VERSION = "0.5.1"
 end
