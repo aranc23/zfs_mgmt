@@ -28,6 +28,8 @@ class ZfsMgmt::ZfsMgr::Send < Thor
   method_option :exclude, :aliases => :'-x', :desc => "passed to -x option of receive side", :type => :string, repeatable: true
   method_option :option, :aliases => :'-o', :desc => "passed to -o option of receive side", :type => :string, repeatable: true
   method_option :drop_holds, :desc => "pass the -h option to zfs recv, indicating holds should be ignored", :type => :boolean
+  method_option :discard_last, :desc => "pass the -e option to zfs recv, discarding all but the last element of the send snapshot's file system name", :type => :boolean
+  method_option :discard_first, :desc => "pass the -d option to zfs recv, discarding the first element of the send snapshot's file system name", :type => :boolean
 
   method_option :mbuffer, :desc => "insert mbuffer between send and recv", :default => true, :type => :boolean
   method_option :mbuffer_size, :desc => "passed to mbuffer -s option", :type => :string

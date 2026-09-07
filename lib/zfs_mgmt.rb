@@ -559,8 +559,8 @@ module ZfsMgmt
       'noop'          => '-n',
       'drop_holds'    => '-h',
       'unmount'       => '-u',
-      #'discard_last'  => '-e',
-      #'discard_first' => '-d',
+      'discard_last'  => '-e',
+      'discard_first' => '-d'
     }
     recv_opts.each do |p,o|
       # allow the command line options to override the properties value
