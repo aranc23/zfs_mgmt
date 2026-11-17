@@ -16,10 +16,12 @@ class ZfsMgmt::ZfsMgr::Snapshot < Thor
     ZfsMgmt.unlock(lock)
   end
   desc "policy", "print the policy table for zfs"
+  method_option :show_destroy, :type => :boolean, :default => false,
+                :desc => 'interleave snapshots that would be deleted with kept snapshots'
   def policy()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
-    ZfsMgmt.snapshot_policy(filter: options[:filter])
+    ZfsMgmt.snapshot_policy(filter: options[:filter], show_destroy: options[:show_destroy])
   end
   desc "create", "execute zfs snapshot based on zfs properties"
   method_option :noop, :type => :boolean, :default => false,

@@ -1,5 +1,6 @@
 # coding: utf-8
 require "zfs_mgmt/version"
+require "thor"
 require "zfs_mgmt/restic"
 require "zfs_mgmt/zfs_mgr"
 require 'pp'
@@ -264,7 +265,7 @@ module ZfsMgmt
     end
     return zfss
   end
-  def self.snapshot_policy(filter: '.+')
+  def self.snapshot_policy(filter: '.+', show_destroy: false)
     zfs_managed_list(filter: filter).each do |zfs,props,snaps|
       unless props.has_key?('zfsmgmt:policy')
         $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no policy configuration in zfsmgmt:policy, skipping")
@@ -279,7 +280,9 @@ module ZfsMgmt
         next
       end
 
-      if saved_snaps.length == 0
+      snaps_to_show = show_destroy ? (saved_snaps + deleteme).uniq : saved_snaps
+
+      if snaps_to_show.length == 0
         $logger.info("no snapshots marked as saved by policy for #{zfs}")
         next
       end
@@ -287,7 +290,7 @@ module ZfsMgmt
       table = Text::Table.new
       table.head = [zfs,'creation','hourly','daily','weekly','monthly','yearly']
       table.rows = []
-      saved_snaps.sort { |a,b| snaps[b]['creation'] <=> snaps[a]['creation'] }.each do |snap|
+      snaps_to_show.sort { |a,b| snaps[b]['creation'] <=> snaps[a]['creation'] }.each do |snap|
         table.rows << [snap.split('@')[1],local_epoch_to_datetime(snaps[snap]['creation'])] + find_saved_reason(saved,snap)
       end
       print table.to_s

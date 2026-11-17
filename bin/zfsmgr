@@ -1,3 +1,4 @@
+#!/usr/bin/env ruby
 require "thor"
 require "zfs_mgmt"
 require "zfs_mgmt/restic"
