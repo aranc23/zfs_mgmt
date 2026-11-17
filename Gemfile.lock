@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    zfs_mgmt (0.5.4)
+    zfs_mgmt (0.5.5)
       filesize (~> 0.2)
       text-table (~> 1.2)
       thor (~> 1.0)
