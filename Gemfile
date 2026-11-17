@@ -9,5 +9,5 @@ gem "filesize"
 gem "json"
 gem "timeout"
 
-gem 'solargraph', group: :development
+gem 'ruby-lsp', group: :development
 gemspec
