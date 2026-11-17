@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    zfs_mgmt (0.5.5)
+    zfs_mgmt (0.5.6)
       filesize (~> 0.2)
       text-table (~> 1.2)
       thor (~> 1.0)
@@ -13,7 +13,13 @@ GEM
     filesize (0.2.0)
     json (3.1.0)
     language_server-protocol (3.17.0.6)
+    logger (1.7.0)
+    prism (1.9.0)
     rake (13.4.2)
+    rbs (4.2.0)
+      logger
+      prism (>= 1.6.0)
+      tsort
     rspec (3.13.2)
       rspec-core (~> 3.13.0)
       rspec-expectations (~> 3.13.0)
@@ -27,15 +33,14 @@ GEM
       diff-lcs (>= 1.2.0, < 2.0)
       rspec-support (~> 3.13.0)
     rspec-support (3.13.8)
-    ruby-lsp (0.11.2)
+    ruby-lsp (0.26.11)
       language_server-protocol (~> 3.17.0)
-      sorbet-runtime (>= 0.5.5685)
-      yarp (>= 0.12, < 0.13)
-    sorbet-runtime (0.6.13690)
+      prism (>= 1.2, < 2.0)
+      rbs (>= 3, < 5)
     text-table (1.2.4)
     thor (1.5.0)
     timeout (0.6.1)
-    yarp (0.12.0)
+    tsort (0.2.0)
 
 PLATFORMS
   x86_64-linux
