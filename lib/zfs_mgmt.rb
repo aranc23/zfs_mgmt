@@ -554,13 +554,14 @@ module ZfsMgmt
     zfs_send_com + extra_opts + [dq(target),'|']
   end
   def self.zfs_recv_com(options,extra_opts,props,target)
-    zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv', '-F', '-s' ]
+    zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv', '-s' ]
     recv_opts = {
       'noop'          => '-n',
       'drop_holds'    => '-h',
       'unmount'       => '-u',
       'discard_last'  => '-e',
-      'discard_first' => '-d'
+      'discard_first' => '-d',
+      'force'         => '-F'
     }
     recv_opts.each do |p,o|
       # allow the command line options to override the properties value
