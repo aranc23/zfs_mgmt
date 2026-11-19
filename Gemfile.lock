@@ -11,6 +11,7 @@ GEM
   remote: https://rubygems.org/
   specs:
     diff-lcs (1.6.2)
+    docile (1.4.1)
     filesize (0.2.0)
     json (3.1.0)
     language_server-protocol (3.17.0.6)
@@ -39,6 +40,12 @@ GEM
       language_server-protocol (~> 3.17.0)
       prism (>= 1.2, < 2.0)
       rbs (>= 3, < 5)
+    simplecov (0.22.0)
+      docile (~> 1.1)
+      simplecov-html (~> 0.11)
+      simplecov_json_formatter (~> 0.1)
+    simplecov-html (0.13.2)
+    simplecov_json_formatter (0.1.4)
     text-table (1.2.4)
     thor (1.5.0)
     timeout (0.6.1)
@@ -55,6 +62,7 @@ DEPENDENCIES
   rake (>= 12.3.3)
   rspec (~> 3.0)
   ruby-lsp
+  simplecov (~> 0.22)
   text-table
   thor
   timeout

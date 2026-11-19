@@ -393,6 +393,829 @@ RSpec.describe ZfsMgmt do
       )
       expect(com).to eq(["zfs", "recv", "-s", '"backup/pool/fs"'])
     end
+
+    it "supports all recv flags, excludes, options, extra_opts, and remote ssh wrapping with mbuffer" do
+      opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+        noop: true,
+        drop_holds: true,
+        unmount: true,
+        discard_last: true,
+        discard_first: true,
+        force: true,
+        verbose: "recv",
+        exclude: ["mountpoint", "sharenfs"],
+        option: ["readonly=on"],
+        remote: "backup@remotehost",
+        mbuffer: true,
+        mbuffer_size: "512M"
+      )
+      com = ZfsMgmt.zfs_recv_com(opts, ["-o", "canmount=noauto"], {}, "backup/pool/fs")
+      expect(com).to eq([
+        "ssh",
+        "backup@remotehost",
+        "'mbuffer -q -m 512M | zfs recv -s -n -h -u -e -d -F -v -x mountpoint -x sharenfs -o readonly=on -o canmount=noauto \"backup/pool/fs\"'"
+      ])
+    end
+
+    it "reads recv flags and remote host from zfsmgmt properties when CLI options are not set" do
+      props = {
+        "zfsmgmt:recv_force" => "true",
+        "zfsmgmt:recv_unmount" => "on",
+        "zfsmgmt:remote" => "root@drhost"
+      }
+      com = ZfsMgmt.zfs_recv_com({}, [], props, "backup/pool/fs")
+      expect(com).to eq([
+        "ssh",
+        "root@drhost",
+        "'zfs recv -s -u -F \"backup/pool/fs\"'"
+      ])
+    end
+  end
+
+  describe ".custom_properties" do
+    it "returns all expected zfsmgmt:* property names" do
+      props = ZfsMgmt.custom_properties
+      expect(props).to include(
+        "zfsmgmt:policy",
+        "zfsmgmt:manage",
+        "zfsmgmt:strategy",
+        "zfsmgmt:minage",
+        "zfsmgmt:matchsnaps",
+        "zfsmgmt:ignoresnaps",
+        "zfsmgmt:prefersnaps",
+        "zfsmgmt:snapshot",
+        "zfsmgmt:snap_prefix",
+        "zfsmgmt:snap_timestamp",
+        "zfsmgmt:send",
+        "zfsmgmt:remote",
+        "zfsmgmt:destination",
+        "zfsmgmt:recv_state"
+      )
+      expect(props.all? { |p| p.start_with?("zfsmgmt:") }).to be(true)
+    end
+  end
+
+  describe ".timespec_to_seconds" do
+    it "converts seconds, minutes, hours, days, weeks, and unitless numbers" do
+      expect(ZfsMgmt.timespec_to_seconds("45")).to eq(45)
+      expect(ZfsMgmt.timespec_to_seconds("30s")).to eq(30)
+      expect(ZfsMgmt.timespec_to_seconds("5m")).to eq(300)
+      expect(ZfsMgmt.timespec_to_seconds("2h")).to eq(7200)
+      expect(ZfsMgmt.timespec_to_seconds("3d")).to eq(259_200)
+      expect(ZfsMgmt.timespec_to_seconds("1w")).to eq(604_800)
+      expect(ZfsMgmt.timespec_to_seconds("2D")).to eq(172_800)
+    end
+
+    it "raises an error for invalid timespec strings" do
+      expect { ZfsMgmt.timespec_to_seconds("abc") }.to raise_error(StandardError)
+    end
+  end
+
+  describe ".policy_parser" do
+    it "parses combined timeframe policy strings case-insensitively" do
+      res = ZfsMgmt.policy_parser("24h14d4w12m2y")
+      expect(res).to eq({
+        "hourly" => 24,
+        "daily" => 14,
+        "weekly" => 4,
+        "monthly" => 12,
+        "yearly" => 2
+      })
+    end
+
+    it "defaults unspecified timeframes to 0" do
+      res = ZfsMgmt.policy_parser("7D")
+      expect(res).to eq({
+        "hourly" => 0,
+        "daily" => 7,
+        "weekly" => 0,
+        "monthly" => 0,
+        "yearly" => 0
+      })
+    end
+
+    it "raises ArgumentError when policy string contains no valid tokens" do
+      expect { ZfsMgmt.policy_parser("invalid") }.to raise_error(ArgumentError, /unable to parse the policy configuration/)
+    end
+  end
+
+  describe "utility helpers" do
+    it "quotes strings with .sq and .dq" do
+      expect(ZfsMgmt.sq("hello")).to eq("'hello'")
+      expect(ZfsMgmt.dq("hello")).to eq('"hello"')
+    end
+
+    it "checks boolean property strings with .prop_on? and .prop_off?" do
+      expect(ZfsMgmt.prop_on?("true")).to be(true)
+      expect(ZfsMgmt.prop_on?("on")).to be(true)
+      expect(ZfsMgmt.prop_on?("false")).to be(false)
+
+      expect(ZfsMgmt.prop_off?("false")).to be(true)
+      expect(ZfsMgmt.prop_off?("off")).to be(true)
+      expect(ZfsMgmt.prop_off?("true")).to be(false)
+    end
+
+    it "matches filesystem names with .match_filter?" do
+      expect(ZfsMgmt.match_filter?("tank/data/sub", "^tank/data")).to be_truthy
+      expect(ZfsMgmt.match_filter?("rpool/ROOT", "^tank/data")).to be_nil
+    end
+
+    it "compares hash values against Array, Hash, Method, Regexp, and literal values with .key_comp?" do
+      h = {
+        "flag" => "on",
+        "mode" => "recursive",
+        "num" => 42
+      }
+      expect(ZfsMgmt.key_comp?(h, "missing")).to be(false)
+      expect(ZfsMgmt.key_comp?(h, "flag")).to be(true)
+      expect(ZfsMgmt.key_comp?(h, "mode", ["local", "recursive"])).to be(true)
+      expect(ZfsMgmt.key_comp?(h, "mode", { "recursive" => 1 })).to be(true)
+      expect(ZfsMgmt.key_comp?(h, "mode", /^recur/)).to be_truthy
+      expect(ZfsMgmt.key_comp?(h, "num", 42)).to be(true)
+      expect(ZfsMgmt.key_comp?(h, "num", 99)).to be(false)
+    end
+
+    it "sets $logger severity with .set_log_level" do
+      old_level = $logger.level
+      begin
+        ZfsMgmt.set_log_level("debug")
+        expect($logger.level).to eq(Logger::DEBUG)
+        ZfsMgmt.set_log_level("info")
+        expect($logger.level).to eq(Logger::INFO)
+        ZfsMgmt.set_log_level("warn")
+        expect($logger.level).to eq(Logger::WARN)
+        ZfsMgmt.set_log_level("error")
+        expect($logger.level).to eq(Logger::ERROR)
+        ZfsMgmt.set_log_level("fatal")
+        expect($logger.level).to eq(Logger::FATAL)
+      ensure
+        $logger.level = old_level
+      end
+    end
+  end
+
+  describe ".zfsget" do
+    before do
+      ZfsMgmt.global_options = { zfs_binary: "zfs" }
+    end
+
+    it "parses tab-delimited zfs get output and translates integer properties and sources" do
+      stdout = [
+        "tank/data\tcreation\t1700000000\t-",
+        "tank/data\tuserrefs\t2\t-",
+        "tank/data\tzfsmgmt:manage\ttrue\tlocal",
+        "tank/data\tzfsmgmt:policy\t14d\tinherited from tank"
+      ].join("\n") + "\n"
+      status = instance_double(Process::Status, signaled?: false, success?: true)
+
+      expect(Open3).to receive(:capture3).with("zfs get -Hp creation,userrefs,zfsmgmt:manage -t filesystem tank/data")
+        .and_return([stdout, "", status])
+
+      res = ZfsMgmt.zfsget(
+        properties: ["creation", "userrefs", "zfsmgmt:manage"],
+        types: ["filesystem"],
+        zfs: "tank/data"
+      )
+
+      expect(res).to eq({
+        "tank/data" => {
+          "creation" => 1_700_000_000,
+          "userrefs" => 2,
+          "zfsmgmt:manage" => "true",
+          "zfsmgmt:manage@source" => "local",
+          "zfsmgmt:policy" => "14d",
+          "zfsmgmt:policy@source" => "inherited from tank"
+        }
+      })
+    end
+
+    it "raises ZfsGetError when command exits non-zero" do
+      status = instance_double(Process::Status, signaled?: false, success?: false, exitstatus: 1)
+      expect(Open3).to receive(:capture3).and_return(["out line\n", "dataset does not exist\n", status])
+
+      expect {
+        ZfsMgmt.zfsget(zfs: "tank/nonexistent")
+      }.to raise_error(ZfsMgmt::ZfsGetError, /failed to execute.*exit status 1/)
+    end
+
+    it "raises ZfsGetError when process is signaled" do
+      status = instance_double(Process::Status, signaled?: true, termsig: 15)
+      expect(Open3).to receive(:capture3).and_return(["", "", status])
+
+      expect {
+        ZfsMgmt.zfsget(zfs: "tank/data")
+      }.to raise_error(ZfsMgmt::ZfsGetError, /process was signalled.*termsig 15/)
+    end
+  end
+
+  describe ".zfs_managed_list" do
+    it "filters filesystems by regex, property_match, and skips datasets without snapshots" do
+      allow(ZfsMgmt).to receive(:zfsget).with(properties: ["all"]).and_return({
+        "tank/managed" => { "zfsmgmt:manage" => "true" },
+        "tank/unmanaged" => { "zfsmgmt:manage" => "false" },
+        "tank/nosnaps" => { "zfsmgmt:manage" => "on" },
+        "other/managed" => { "zfsmgmt:manage" => "true" }
+      })
+
+      snaps_managed = { "tank/managed@s1" => { "creation" => 1000, "userrefs" => 0 } }
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        properties: ["name", "creation", "userrefs", "used", "written", "referenced"],
+        types: ["snapshot"],
+        zfs: "tank/managed"
+      ).and_return(snaps_managed)
+
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        properties: ["name", "creation", "userrefs", "used", "written", "referenced"],
+        types: ["snapshot"],
+        zfs: "tank/nosnaps"
+      ).and_return({})
+
+      res = ZfsMgmt.zfs_managed_list(filter: "^tank/")
+      expect(res).to eq([
+        ["tank/managed", { "zfsmgmt:manage" => "true" }, snaps_managed]
+      ])
+    end
+  end
+
+  describe ".snapshot_destroy_policy" do
+    let(:zfs) { "tank/data" }
+    # Same day (2026-11-17) at 08:00, 12:00, 16:00, plus previous day (2026-11-16) at 10:00
+    let(:t_day2_late)  { Time.new(2026, 11, 17, 16, 0, 0).to_i }
+    let(:t_day2_mid)   { Time.new(2026, 11, 17, 12, 0, 0).to_i }
+    let(:t_day2_early) { Time.new(2026, 11, 17, 8, 0, 0).to_i }
+    let(:t_day1)       { Time.new(2026, 11, 16, 10, 0, 0).to_i }
+
+    let(:snaps) do
+      {
+        "tank/data@auto-3" => { "creation" => t_day2_late },
+        "tank/data@pref-2" => { "creation" => t_day2_mid },
+        "tank/data@auto-1" => { "creation" => t_day2_early },
+        "tank/data@day1"   => { "creation" => t_day1 }
+      }
+    end
+
+    it "selects oldest snapshot in period by default and never deletes the newest overall snapshot" do
+      props = { "zfsmgmt:policy" => "1d" }
+      saved, saved_snaps, deleteme = ZfsMgmt.snapshot_destroy_policy(zfs, props, snaps)
+
+      expect(saved["daily"]["2026-11-17"]).to eq("tank/data@auto-1")
+      expect(saved_snaps).to eq(["tank/data@auto-1"])
+      # auto-3 is the very newest snapshot overall, so it is protected from deletion
+      expect(deleteme).to contain_exactly("tank/data@pref-2", "tank/data@day1")
+    end
+
+    it "selects youngest snapshot in period when strategy is youngest" do
+      props = {
+        "zfsmgmt:policy" => "1d",
+        "zfsmgmt:strategy" => "youngest"
+      }
+      saved, saved_snaps, deleteme = ZfsMgmt.snapshot_destroy_policy(zfs, props, snaps)
+
+      expect(saved["daily"]["2026-11-17"]).to eq("tank/data@auto-3")
+      expect(saved_snaps).to eq(["tank/data@auto-3"])
+      expect(deleteme).to contain_exactly("tank/data@pref-2", "tank/data@auto-1", "tank/data@day1")
+    end
+
+    it "prefers snapshots matching zfsmgmt:prefersnaps even under youngest strategy" do
+      props = {
+        "zfsmgmt:policy" => "1d",
+        "zfsmgmt:strategy" => "youngest",
+        "zfsmgmt:prefersnaps" => "^pref-"
+      }
+      saved, _saved_snaps, _deleteme = ZfsMgmt.snapshot_destroy_policy(zfs, props, snaps)
+      expect(saved["daily"]["2026-11-17"]).to eq("tank/data@pref-2")
+    end
+
+    it "skips snapshots matching zfsmgmt:ignoresnaps from both policy saving and deletion" do
+      props = {
+        "zfsmgmt:policy" => "1d",
+        "zfsmgmt:ignoresnaps" => "^day1|^auto-1"
+      }
+      saved, _saved_snaps, deleteme = ZfsMgmt.snapshot_destroy_policy(zfs, props, snaps)
+      expect(saved["daily"]["2026-11-17"]).to eq("tank/data@pref-2")
+      expect(deleteme).to be_empty
+    end
+
+    it "only considers snapshots matching zfsmgmt:matchsnaps for policy saving" do
+      props = {
+        "zfsmgmt:policy" => "1d",
+        "zfsmgmt:matchsnaps" => "^pref-"
+      }
+      saved, _saved_snaps, deleteme = ZfsMgmt.snapshot_destroy_policy(zfs, props, snaps)
+      expect(saved["daily"]["2026-11-17"]).to eq("tank/data@pref-2")
+      expect(deleteme).to contain_exactly("tank/data@auto-1", "tank/data@day1")
+    end
+
+    it "protects snapshots younger than zfsmgmt:minage from deletion" do
+      allow(Time).to receive(:now).and_return(Time.at(t_day2_late + 600))
+      props = {
+        "zfsmgmt:policy" => "1d",
+        "zfsmgmt:minage" => "6h"
+      }
+      _saved, _saved_snaps, deleteme = ZfsMgmt.snapshot_destroy_policy(zfs, props, snaps)
+      # pref-2 is only 4h10m old (< 6h minage), so only day1 is deleted
+      expect(deleteme).to eq(["tank/data@day1"])
+    end
+  end
+
+  describe ".snapshot_destroy" do
+    before do
+      ZfsMgmt.global_options = { zfs_binary: "zfs" }
+    end
+
+    it "builds a batched zfs destroy command with oldest snapshots first and respects noop and verbose" do
+      snaps = {
+        "tank/data@s3" => { "creation" => Time.new(2026, 11, 17, 12, 0, 0).to_i },
+        "tank/data@s2" => { "creation" => Time.new(2026, 11, 16, 12, 0, 0).to_i },
+        "tank/data@s1" => { "creation" => Time.new(2026, 11, 15, 12, 0, 0).to_i }
+      }
+      props = { "zfsmgmt:policy" => "1d" }
+      allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([["tank/data", props, snaps]])
+
+      expect(ZfsMgmt).to receive(:system_com).with(["zfs", "destroy", "-d", "-n", "-v", "tank/data@s1,s2"])
+      ZfsMgmt.snapshot_destroy(noop: true, verbose: true, filter: "^tank/")
+    end
+
+    it "skips filesystems with missing or invalid zfsmgmt:policy" do
+      snaps = { "tank/data@s1" => { "creation" => 1000 } }
+      allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([
+        ["tank/nopolicy", {}, snaps],
+        ["tank/badpolicy", { "zfsmgmt:policy" => "bogus" }, snaps]
+      ])
+
+      expect(ZfsMgmt).not_to receive(:system_com)
+      ZfsMgmt.snapshot_destroy
+    end
+  end
+
+  describe ".snapshot_create" do
+    before do
+      ZfsMgmt.global_options = { "zfs_binary" => "zfs" }
+    end
+
+    it "creates snapshots for filesystems with zfsmgmt:snapshot enabled, including recursive and custom prefix/timestamp" do
+      fixed_dt = DateTime.parse("2026-11-18T10:20:30+00:00")
+      allow(DateTime).to receive(:now).and_return(fixed_dt)
+
+      allow(ZfsMgmt).to receive(:zfsget).and_return({
+        "tank/simple" => {
+          "zfsmgmt:snapshot" => "true"
+        },
+        "tank/rec" => {
+          "zfsmgmt:snapshot" => "recursive",
+          "zfsmgmt:snapshot@source" => "local",
+          "zfsmgmt:snap_prefix" => "hourly",
+          "zfsmgmt:snap_timestamp" => "%F"
+        },
+        "tank/rec_inherited" => {
+          "zfsmgmt:snapshot" => "recursive",
+          "zfsmgmt:snapshot@source" => "inherited from tank/rec"
+        },
+        "tank/off" => {
+          "zfsmgmt:snapshot" => "false"
+        }
+      })
+
+      expect(ZfsMgmt).to receive(:system_com).with(
+        ["zfs", "snapshot", "tank/simple@zfsmgmt-#{fixed_dt.strftime('%FT%T%z')}"],
+        true
+      )
+      expect(ZfsMgmt).to receive(:system_com).with(
+        ["zfs", "snapshot", "-r", "tank/rec@hourly-2026-11-18"],
+        true
+      )
+
+      ZfsMgmt.snapshot_create(noop: true, filter: "^tank/")
+    end
+  end
+
+  describe ".zfs_send_com, .mbuffer_command, and .pv_command" do
+    before do
+      ZfsMgmt.global_options = {
+        zfs_binary: "zfs",
+        mbuffer_binary: "mbuffer"
+      }
+    end
+
+    it "constructs zfs_send_com with CLI and property flags" do
+      opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+        verbose: "send",
+        raw: true,
+        props: false
+      )
+      props = {
+        "zfsmgmt:send_props" => "true",
+        "zfsmgmt:send_holds" => "on",
+        "zfsmgmt:send_compressed" => "true"
+      }
+      com = ZfsMgmt.zfs_send_com(opts, props, ["-i", '"@snap1"'], "tank/fs@snap2")
+      expect(com).to eq(["zfs", "send", "-v", "-P", "-c", "-h", "-w", "-i", '"@snap1"', '"tank/fs@snap2"', "|"])
+    end
+
+    it "constructs mbuffer_command with quiet and size flags" do
+      expect(ZfsMgmt.mbuffer_command({ mbuffer_size: "1G" })).to eq(["mbuffer", "-q", "-m", "1G", "|"])
+      expect(ZfsMgmt.mbuffer_command({ verbose: "mbuffer" })).to eq(["mbuffer", "|"])
+    end
+
+    it "constructs pv_command with and without size estimate" do
+      expect(ZfsMgmt.pv_command({ pv_binary: "pv" }, 123_456)).to eq(["pv", "-prb", "-e", "-s", 123_456, "|"])
+      expect(ZfsMgmt.pv_command({ pv_binary: "pv" }, nil)).to eq(["pv", "-prb", "|"])
+    end
+  end
+
+  describe ".zfs_send additional scenarios" do
+    let(:zfs) { "tank/sub/fs" }
+    let(:snaps) do
+      {
+        "tank/sub/fs@snap1" => { "creation" => 1000 },
+        "tank/sub/fs@snap2" => { "creation" => 2000 }
+      }
+    end
+
+    around do |example|
+      Dir.mktmpdir do |tmpdir|
+        ZfsMgmt.global_options = {
+          state_db: File.join(tmpdir, "send_state.pstore"),
+          zfs_binary: "zfs",
+          mbuffer_binary: "mbuffer"
+        }
+        example.run
+      end
+    end
+
+    it "sends initial snapshot and incremental update when destination is missing and destination is inherited" do
+      props = {
+        "zfsmgmt:destination" => "backup/dest",
+        "zfsmgmt:destination@source" => "inherited from tank",
+        "zfsmgmt:send_intermediary" => "true"
+      }
+      # Inherited destination path: File.join("backup/dest", "tank", "/sub/fs") -> "backup/dest/tank/sub/fs"
+      dest = "backup/dest/tank/sub/fs"
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: [])
+        .and_raise(ZfsMgmt::ZfsGetError.new("missing"))
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      # First system_com: initial send of oldest snapshot (snap1)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", '"tank/sub/fs@snap1"', "|",
+        "zfs", "recv", "-s", "\"#{dest}\""
+      ]).ordered.and_return(status_ok)
+
+      # Then zfs_send checks remote snapshots and sends incremental (-I) to snap2
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: dest,
+        types: ["snapshot"],
+        command_prefix: [],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-I", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "zfs", "recv", "-s", "\"#{dest}\""
+      ]).ordered.and_return(status_ok)
+
+      ZfsMgmt.zfs_send({}, zfs, props, snaps)
+    end
+
+    it "resumes an interrupted receive when receive_resume_token is present on destination" do
+      props = {
+        "zfsmgmt:destination" => "backup/pool",
+        "zfsmgmt:destination@source" => "local"
+      }
+      dest = "backup/pool/fs"
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: []).and_return({
+        dest => { "receive_resume_token" => "1-abc-token" }
+      })
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-t", "1-abc-token", "|",
+        "zfs", "recv", "-s", "\"#{dest}\""
+      ]).and_return(status_ok)
+
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: dest,
+        types: ["snapshot"],
+        command_prefix: [],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{dest}@snap2" => { "creation" => 2000, "userrefs" => 0 }
+      })
+
+      ZfsMgmt.zfs_send({}, zfs, props, snaps)
+    end
+  end
+
+  describe ".zfs_send_all" do
+    it "skips received filesystems, non-local replicated descendants, and filesystems without destination" do
+      snaps = { "tank/fs@s1" => { "creation" => 1000 } }
+      allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([
+        ["tank/received", { "zfsmgmt:send@source" => "received", "zfsmgmt:destination" => "b/p" }, snaps],
+        ["tank/rep_child", { "zfsmgmt:send_replicate" => "true", "zfsmgmt:send_replicate@source" => "inherited from tank", "zfsmgmt:destination" => "b/p" }, snaps],
+        ["tank/nodest", { "zfsmgmt:send@source" => "local" }, snaps],
+        ["tank/valid", { "zfsmgmt:send@source" => "local", "zfsmgmt:destination" => "b/p", "zfsmgmt:destination@source" => "local" }, snaps]
+      ])
+
+      expect(ZfsMgmt).to receive(:zfs_send).once.with(
+        { filter: ".+" },
+        "tank/valid",
+        hash_including("zfsmgmt:destination" => "b/p"),
+        snaps
+      )
+
+      ZfsMgmt.zfs_send_all({ filter: ".+" })
+    end
+  end
+
+  describe ".lock and .unlock" do
+    it "returns nil when lock option is false" do
+      expect(ZfsMgmt.lock({ lock: false })).to be_nil
+    end
+
+    it "acquires and releases an exclusive file lock" do
+      Dir.mktmpdir do |tmpdir|
+        lock_file = File.join(tmpdir, "zfsmgr.lock")
+        lock = ZfsMgmt.lock({ lock: true, lock_file: lock_file, lock_wait: 2 })
+        expect(lock).to be_a(File)
+        expect(File.exist?(lock_file)).to be(true)
+        ZfsMgmt.unlock(lock)
+        expect(lock.closed?).to be(true)
+      end
+    end
+
+    it "raises Errno::ENOENT when lock file directory does not exist" do
+      expect {
+        ZfsMgmt.lock({ lock: true, lock_file: "/nonexistent_dir_12345/zfsmgr.lock", lock_wait: 1 })
+      }.to raise_error(Errno::ENOENT)
+    end
+  end
+
+  describe ZfsMgmt::Restic do
+    describe ".valid_chain" do
+      let(:snap_l0) do
+        {
+          "zfsmgmt:snapshot" => "tank/fs@s1",
+          "zfsmgmt:level" => 0
+        }
+      end
+      let(:snap_l1) do
+        {
+          "zfsmgmt:snapshot" => "tank/fs@s2",
+          "zfsmgmt:parent" => "tank/fs@s1",
+          "zfsmgmt:level" => 1
+        }
+      end
+      let(:snap_broken) do
+        {
+          "zfsmgmt:snapshot" => "tank/fs@s3",
+          "zfsmgmt:parent" => "tank/fs@missing",
+          "zfsmgmt:level" => 2
+        }
+      end
+      let(:index) do
+        {
+          "tank/fs@s1" => snap_l0,
+          "tank/fs@s2" => snap_l1,
+          "tank/fs@s3" => snap_broken
+        }
+      end
+
+      it "returns the full chain when all parents exist down to level 0" do
+        chain = ZfsMgmt::Restic.valid_chain(snap_l1, [snap_l0, snap_l1], index, [])
+        expect(chain).to eq([snap_l1, snap_l0])
+      end
+
+      it "returns an empty array when a parent in the chain is missing" do
+        chain = ZfsMgmt::Restic.valid_chain(snap_broken, [snap_l0, snap_l1, snap_broken], index, [])
+        expect(chain).to eq([])
+      end
+    end
+
+    describe ".backup" do
+      before do
+        ZfsMgmt.global_options = { "zfs_binary" => "zfs" }
+      end
+
+      it "performs an incremental restic backup, sets hold on current snapshot, and releases obsolete holds" do
+        zfs = "tank/fs"
+        props = {
+          "zfsmgmt:restic_backup" => "true",
+          "zfsmgmt:restic_repository" => "/srv/restic-repo"
+        }
+        zfs_snapshots = {
+          "tank/fs@old_held" => { "creation" => 1000, "userrefs" => 1 },
+          "tank/fs@s1"       => { "creation" => 2000, "userrefs" => 1 },
+          "tank/fs@s2"       => { "creation" => 3000, "userrefs" => 0 }
+        }
+
+        allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([[zfs, props, zfs_snapshots]])
+
+        restic_snap_s1 = {
+          "time" => "2026-11-16T12:00:00Z",
+          "date_time" => DateTime.parse("2026-11-16T12:00:00Z"),
+          "zfsmgmt:zfs" => "tank/fs",
+          "zfsmgmt:snapshot" => "tank/fs@s1",
+          "zfsmgmt:level" => 0
+        }
+        allow(ZfsMgmt::Restic).to receive(:restic_snapshots).and_return([
+          [restic_snap_s1],
+          { "tank/fs@s1" => restic_snap_s1 }
+        ])
+
+        expect(ZfsMgmt).to receive(:zfs_holds).with("tank/fs@s2").and_return([])
+        expect(ZfsMgmt).to receive(:zfs_hold).with("zfsmgmt_restic", "tank/fs@s2")
+        expect(ZfsMgmt).to receive(:system_com) do |com|
+          expect(com).to include("zfs", "send", "-w", "-h", "-p", "-i", "tank/fs@s1", "tank/fs@s2")
+          expect(com).to include("restic", "backup", "--stdin", "--stdin-filename", "tank/fs")
+          expect(com).to include("--repo", "/srv/restic-repo")
+          expect(com).to include('"zfsmgmt:level=1"', '"zfsmgmt:parent=tank/fs@s1"')
+        end
+        expect(ZfsMgmt).to receive(:zfs_holds).with("tank/fs@old_held").and_return(["zfsmgmt_restic"])
+        expect(ZfsMgmt).to receive(:zfs_release).with("zfsmgmt_restic", "tank/fs@old_held")
+
+        opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+          filter: ".+",
+          restic_binary: "restic",
+          buffer: "256m",
+          verbose: 1
+        )
+        ZfsMgmt::Restic.backup(backup_level: 2, options: opts)
+      end
+
+      it "skips backup when latest snapshot already exists in restic index" do
+        zfs = "tank/fs"
+        props = { "zfsmgmt:restic_backup" => "true" }
+        zfs_snapshots = { "tank/fs@s1" => { "creation" => 1000, "userrefs" => 1 } }
+        allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([[zfs, props, zfs_snapshots]])
+
+        restic_snap_s1 = { "zfsmgmt:snapshot" => "tank/fs@s1", "zfsmgmt:level" => 0 }
+        allow(ZfsMgmt::Restic).to receive(:restic_snapshots).and_return([
+          [restic_snap_s1],
+          { "tank/fs@s1" => restic_snap_s1 }
+        ])
+
+        expect(ZfsMgmt).not_to receive(:system_com)
+        ZfsMgmt::Restic.backup(backup_level: 2, options: { "filter" => ".+" })
+      end
+    end
+  end
+
+  describe ZfsMgmt::ZfsMgr::List do
+    let(:now) { Time.new(2026, 11, 18, 12, 0, 0).to_i }
+
+    before do
+      allow(Time).to receive(:now).and_return(Time.at(now))
+    end
+
+    describe "#stale" do
+      let(:stale_time) { now - (3 * 86_400) } # 3 days ago
+      let(:fresh_time) { now - 3600 }         # 1 hour ago
+
+      before do
+        allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([
+          ["tank/stale", {}, { "tank/stale@oldsnap" => { "creation" => stale_time } }],
+          ["tank/fresh", {}, { "tank/fresh@newsnap" => { "creation" => fresh_time } }]
+        ])
+      end
+
+      it "prints a table of filesystems whose newest snapshot is older than the threshold" do
+        output = capture_stdout do
+          described_class.start(["stale", "--age", "1d", "--format", "table"])
+        end
+        expect(output).to include("tank/stale")
+        expect(output).to include("oldsnap")
+        expect(output).not_to include("tank/fresh")
+      end
+
+      it "prints tab-separated output when --format tab is given" do
+        output = capture_stdout do
+          described_class.start(["stale", "--age", "1d", "--format", "tab"])
+        end
+        expect(output).to eq("tank/stale\toldsnap\t#{Time.at(stale_time)}\n")
+      end
+    end
+
+    describe "#holds" do
+      before do
+        allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([
+          [
+            "tank/fs",
+            {},
+            {
+              "tank/fs@s1" => { "creation" => 1000, "userrefs" => 0 },
+              "tank/fs@s2" => { "creation" => 2000, "userrefs" => 2 }
+            }
+          ]
+        ])
+        allow(ZfsMgmt).to receive(:zfs_holds).with("tank/fs@s2").and_return(["holdA", "holdB"])
+      end
+
+      it "prints a table of held snapshots by default" do
+        output = capture_stdout do
+          described_class.start(["holds"])
+        end
+        expect(output).to include("tank/fs@s2")
+        expect(output).to include("holdA,holdB")
+        expect(output).not_to include("tank/fs@s1")
+      end
+
+      it "prints zfs release commands when --format release is specified" do
+        output = capture_stdout do
+          described_class.start(["holds", "--format", "release"])
+        end
+        expect(output).to eq("zfs release holdA tank/fs@s2\nzfs release holdB tank/fs@s2\n")
+      end
+    end
+  end
+
+  describe ZfsMgmt::ZfsMgr::Backup do
+    it "dispatches incremental, differential, and full backup commands with appropriate backup levels" do
+      expect(ZfsMgmt::Restic).to receive(:backup).with(backup_level: 3, options: hash_including("level" => 3))
+      described_class.start(["incremental", "--level", "3"])
+
+      expect(ZfsMgmt::Restic).to receive(:backup).with(backup_level: 1, options: anything)
+      described_class.start(["differential"])
+
+      expect(ZfsMgmt::Restic).to receive(:backup).with(backup_level: 0, options: anything)
+      described_class.start(["full"])
+    end
+  end
+
+  describe "additional ZfsMgmt::ZfsMgr::Snapshot CLI commands" do
+    before do
+      allow(ZfsMgmt).to receive(:lock).and_return(nil)
+      allow(ZfsMgmt).to receive(:unlock)
+    end
+
+    it "dispatches `snapshot destroy --noop --verbose` to ZfsMgmt.snapshot_destroy" do
+      expect(ZfsMgmt).to receive(:snapshot_destroy).with(noop: true, verbose: true, filter: "^tank/")
+      ZfsMgmt::ZfsMgr::Snapshot.start(["destroy", "--noop", "--verbose", "--filter", "^tank/"])
+    end
+
+    it "dispatches `snapshot create --noop` to ZfsMgmt.snapshot_create" do
+      expect(ZfsMgmt).to receive(:snapshot_create).with(noop: true, filter: ".+")
+      ZfsMgmt::ZfsMgr::Snapshot.start(["create", "--noop"])
+    end
+  end
+
+  describe ".zfs_holds, .zfs_hold, and .zfs_release" do
+    before do
+      ZfsMgmt.global_options = { "zfs_binary" => "zfs" }
+    end
+
+    it "parses tab-separated hold names from zfs holds -H output" do
+      allow(ZfsMgmt).to receive(:`).with("zfs holds -H tank/fs@s1")
+        .and_return("tank/fs@s1\thold1\tWed Nov 18 12:00 2026\ntank/fs@s1\thold2\tWed Nov 18 12:01 2026\n")
+      system("true")
+
+      expect(ZfsMgmt.zfs_holds("tank/fs@s1")).to eq(["hold1", "hold2"])
+    end
+
+    it "invokes system_com with zfs hold and zfs release" do
+      expect(ZfsMgmt).to receive(:system_com).with(["zfs", "hold", "mytag", "tank/fs@s1"]) { system("true") }
+      ZfsMgmt.zfs_hold("mytag", "tank/fs@s1")
+
+      expect(ZfsMgmt).to receive(:system_com).with(["zfs", "release", "mytag", "tank/fs@s1"]) { system("true") }
+      ZfsMgmt.zfs_release("mytag", "tank/fs@s1")
+    end
+  end
+
+  describe "ZfsMgmt::Restic.restic_snapshots" do
+    it "parses restic snapshots JSON output and indexes snapshots by zfsmgmt:snapshot tag" do
+      json_out = JSON.generate([
+        {
+          "id" => "abc12345",
+          "time" => "2026-11-17T12:00:00Z",
+          "tags" => [
+            "zfsmgmt",
+            "zfsmgmt:zfs=tank/fs",
+            "zfsmgmt:snapshot=tank/fs@s1",
+            "zfsmgmt:level=0"
+          ]
+        }
+      ])
+
+      opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+        restic_binary: "restic",
+        password_file: "/etc/restic.pw",
+        repo: "/srv/restic"
+      )
+
+      expect(ZfsMgmt::Restic).to receive(:`)
+        .with("restic snapshots --json --tag zfsmgmt --path /tank/fs -p /etc/restic.pw --repo /srv/restic")
+        .and_return(json_out)
+      system("true")
+
+      snaps, index = ZfsMgmt::Restic.restic_snapshots("tank/fs", opts, {})
+      expect(snaps.length).to eq(1)
+      expect(snaps.first["zfsmgmt:level"]).to eq(0)
+      expect(snaps.first["zfsmgmt:zfs"]).to eq("tank/fs")
+      expect(index["tank/fs@s1"]).to eq(snaps.first)
+    end
   end
 
   def capture_stdout
