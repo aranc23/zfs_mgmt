@@ -603,13 +603,25 @@ RSpec.describe ZfsMgmt do
       })
     end
 
-    it "raises ZfsGetError when command exits non-zero" do
+    it "raises ZfsDatasetNotFoundError without logging an error when dataset does not exist" do
       status = instance_double(Process::Status, signaled?: false, success?: false, exitstatus: 1)
-      expect(Open3).to receive(:capture3).and_return(["out line\n", "dataset does not exist\n", status])
+      expect(Open3).to receive(:capture3).and_return(["", "cannot open 'tank/nonexistent': dataset does not exist\n", status])
+      expect($logger).not_to receive(:error)
 
       expect {
         ZfsMgmt.zfsget(zfs: "tank/nonexistent")
-      }.to raise_error(ZfsMgmt::ZfsGetError, /failed to execute.*exit status 1/)
+      }.to raise_error(ZfsMgmt::ZfsDatasetNotFoundError, /dataset does not exist: tank\/nonexistent/)
+    end
+
+    it "raises ZfsGetError and logs an error when command exits non-zero for other failures" do
+      status = instance_double(Process::Status, signaled?: false, success?: false, exitstatus: 255)
+      expect(Open3).to receive(:capture3).and_return(["out line\n", "ssh: connect to host backup port 22: Connection refused\n", status])
+      expect($logger).to receive(:error).with(/failed to execute.*exit status 255/)
+      expect($logger).to receive(:error).with("stderr: ssh: connect to host backup port 22: Connection refused")
+
+      expect {
+        ZfsMgmt.zfsget(zfs: "tank/data", command_prefix: ["ssh", "backup"])
+      }.to raise_error(ZfsMgmt::ZfsGetError, /failed to execute.*exit status 255/)
     end
 
     it "raises ZfsGetError when process is signaled" do
@@ -867,7 +879,7 @@ RSpec.describe ZfsMgmt do
       dest = "backup/dest/tank/sub/fs"
 
       expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: [])
-        .and_raise(ZfsMgmt::ZfsGetError.new("missing"))
+        .and_raise(ZfsMgmt::ZfsDatasetNotFoundError.new("dataset does not exist: #{dest}"))
 
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       # First system_com: initial send of oldest snapshot (snap1)
@@ -890,6 +902,21 @@ RSpec.describe ZfsMgmt do
         "zfs", "send", "-I", '"@snap1"', '"tank/sub/fs@snap2"', "|",
         "zfs", "recv", "-s", "\"#{dest}\""
       ]).ordered.and_return(status_ok)
+
+      ZfsMgmt.zfs_send({}, zfs, props, snaps)
+    end
+
+    it "logs an error and aborts send when checking destination fails with a non-missing ZfsGetError" do
+      props = {
+        "zfsmgmt:destination" => "backup/dest",
+        "zfsmgmt:destination@source" => "local"
+      }
+      dest = "backup/dest/fs"
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: [])
+        .and_raise(ZfsMgmt::ZfsGetError.new("ssh connection failed"))
+      expect($logger).to receive(:error).with("unable to check remote filesystem #{dest}")
+      expect(ZfsMgmt).not_to receive(:system_com)
 
       ZfsMgmt.zfs_send({}, zfs, props, snaps)
     end

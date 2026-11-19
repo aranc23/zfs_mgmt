@@ -50,6 +50,8 @@ module ZfsMgmt
   end
   class ZfsGetError < StandardError
   end
+  class ZfsDatasetNotFoundError < ZfsGetError
+  end
   def self.custom_properties()
     return [
       'policy',
@@ -128,6 +130,12 @@ module ZfsMgmt
       raise ZfsGetError, "process was signalled \"#{com.join(' ')}\", termsig #{status.termsig}"
     end
     unless status.success?
+      if se =~ /cannot open '.*': dataset does not exist/i || se =~ /dataset does not exist/i
+        $logger.debug("dataset does not exist when running \"#{com.join(' ')}\", exit status #{status.exitstatus}")
+        so.split("\n").each { |l| $logger.debug("stdout: #{l}") }
+        se.split("\n").each { |l| $logger.debug("stderr: #{l}") }
+        raise ZfsDatasetNotFoundError, "dataset does not exist: #{zfs}"
+      end
       $logger.error("failed to execute \"#{com.join(' ')}\", exit status #{status.exitstatus}")
       so.split("\n").each { |l| $logger.debug("stdout: #{l}") }
       se.split("\n").each { |l| $logger.error("stderr: #{l}") }
@@ -417,9 +425,12 @@ module ZfsMgmt
                         command_prefix: recv_command_prefix(options,props),
                         #properties: ['receive_resume_token'],
                        )
-    rescue ZfsGetError
+    rescue ZfsDatasetNotFoundError
       $logger.debug("recv filesystem doesn't exist: #{destination_path}")
       remote_zfs_state = 'missing'
+    rescue ZfsGetError
+      $logger.error("unable to check remote filesystem #{destination_path}")
+      return
     else
       if recv_zfs[destination_path].has_key?('receive_resume_token')
         remote_zfs_state = recv_zfs[destination_path]['receive_resume_token']
