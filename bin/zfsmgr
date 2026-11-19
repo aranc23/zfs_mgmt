@@ -14,8 +14,9 @@ class ZfsMgr < Thor
                :desc => 'mbuffer binary'
   class_option :pv_binary, :type => :string, :default => 'pv',
                :desc => 'pv binary'
-  class_option :loglevel, :type => :string, :default => ( $stdout.isatty ? 'info' : 'warn' ),
-               :enum => ['debug','error','fatal','info','warn'],
+  class_option :loglevel, :type => :string,
+               :default => ( (ENV['ZFS_MGMT_LOGLEVEL'] && !ENV['ZFS_MGMT_LOGLEVEL'].empty?) ? ENV['ZFS_MGMT_LOGLEVEL'].downcase : ( $stdout.isatty ? 'info' : 'warn' ) ),
+               :enum => ['debug','error','fatal','info','warn','unknown'],
                :desc => 'set logging level to specified severity'
   class_option :lock, :type => :boolean, :default => false,
                :desc => 'lock before running'
