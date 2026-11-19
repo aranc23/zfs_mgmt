@@ -10,6 +10,9 @@ require 'text-table'
 require 'open3'
 require 'filesize'
 require 'timeout'
+require 'pstore'
+require 'json'
+require 'fileutils'
 
 $logger = Logger.new(STDERR, progname: 'zfs_mgmt')
 
@@ -385,6 +388,7 @@ module ZfsMgmt
       unless $?.success?
         $logger.error("command failed: #{$?.exitstatus}")
       end
+      return $?
     end
   end
   def self.zfs_send(options,zfs,props,snaps)
@@ -442,8 +446,9 @@ module ZfsMgmt
       com += pv_command(options,e) if options[:verbose] == 'pv'
       com += zfs_recv_com(options,[],props,destination_path)
  
-      system_com(com)
-      unless $?.success?
+      status = system_com(com)
+      record_send_state(zfs, status) unless options[:noop]
+      unless status && status.success?
         return
       end
 
@@ -472,8 +477,9 @@ module ZfsMgmt
 
       com += recv
 
-      system_com(com)
-      unless $?.success?
+      status = system_com(com)
+      record_send_state(zfs, status) unless options[:noop]
+      unless status && status.success?
         return
       end
     end
@@ -518,7 +524,8 @@ module ZfsMgmt
         com += pv_command(options,e) if options[:verbose] == 'pv'
         com += zfs_recv_com(options,[],props,destination_path)
 
-        system_com(com)
+        status = system_com(com)
+        record_send_state(zfs, status) unless options[:noop]
         return
       end
       $logger.debug("skipping remote snapshot #{rsnap} because the same snapshot doesn't exist locally #{rsnap.sub(destination_path,zfs)}")
@@ -736,6 +743,103 @@ module ZfsMgmt
     unless lock.nil?
       lock.flock(File::LOCK_UN)
       lock.close()
+    end
+  end
+
+  SEND_WARN_SECONDS = 36 * 60 * 60
+  SEND_CRIT_SECONDS = 72 * 60 * 60
+
+  def self.send_state_db_path
+    if global_options && global_options[:state_db]
+      return global_options[:state_db]
+    end
+    dir = if Process.euid == 0
+            '/var/lib/zfs_mgmt'
+          elsif ENV['XDG_STATE_HOME'] && !ENV['XDG_STATE_HOME'].empty?
+            File.join(ENV['XDG_STATE_HOME'], 'zfs_mgmt')
+          else
+            File.join(Dir.home, '.local', 'state', 'zfs_mgmt')
+          end
+    File.join(dir, 'send_state.pstore')
+  end
+
+  def self.send_state_store(path = send_state_db_path)
+    FileUtils.mkdir_p(File.dirname(path))
+    PStore.new(path)
+  end
+
+  def self.record_send_state(zfs, status, timestamp: Time.now.to_i)
+    exit_code = if status.nil?
+                  1
+                elsif status.respond_to?(:exitstatus)
+                  status.exitstatus || (status.respond_to?(:termsig) && status.termsig ? 128 + status.termsig : 1)
+                else
+                  status.to_i
+                end
+    store = send_state_store
+    store.transaction do
+      store[zfs] = JSON.generate({ 'timestamp' => timestamp.to_i, 'exit' => exit_code })
+    end
+  end
+
+  def self.send_state_entries(filter: '.+')
+    path = send_state_db_path
+    return {} unless File.exist?(path)
+    store = send_state_store(path)
+    entries = {}
+    store.transaction(true) do
+      store.roots.sort.each do |zfs|
+        next unless match_filter?(zfs, filter)
+        raw = store[zfs]
+        data = raw.is_a?(String) ? JSON.parse(raw) : raw
+        entries[zfs] = data
+      end
+    end
+    entries
+  end
+
+  def self.send_state_delete(zfs)
+    store = send_state_store
+    store.transaction do
+      store.delete(zfs)
+    end
+  end
+
+  def self.send_state_wipe
+    store = send_state_store
+    store.transaction do
+      store.roots.each do |k|
+        store.delete(k)
+      end
+    end
+  end
+
+  def self.send_state_show(check: false, filter: '.+')
+    entries = send_state_entries(filter: filter)
+    if check
+      now = Time.now.to_i
+      entries.each do |zfs, data|
+        ts = data['timestamp'].to_i
+        exit_code = data['exit'].to_i
+        age = [now - ts, 0].max
+        time_str = local_epoch_to_datetime(ts).to_s
+        state = if exit_code != 0 || age > SEND_CRIT_SECONDS
+                  2
+                elsif age > SEND_WARN_SECONDS
+                  1
+                else
+                  0
+                end
+        puts "#{state} \"zfs_send #{zfs}\" age=#{age};#{SEND_WARN_SECONDS};#{SEND_CRIT_SECONDS} last send #{time_str} exit #{exit_code}"
+      end
+    else
+      return if entries.empty?
+      table = Text::Table.new
+      table.head = ['zfs', 'timestamp', 'exit']
+      table.rows = entries.map do |zfs, data|
+        [zfs, local_epoch_to_datetime(data['timestamp'].to_i), data['exit']]
+      end
+      print table.to_s
     end
   end
 end

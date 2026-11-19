@@ -3,6 +3,7 @@ PATH
   specs:
     zfs_mgmt (0.5.6)
       filesize (~> 0.2)
+      pstore
       text-table (~> 1.2)
       thor (~> 1.0)
 
@@ -15,6 +16,7 @@ GEM
     language_server-protocol (3.17.0.6)
     logger (1.7.0)
     prism (1.9.0)
+    pstore (0.2.1)
     rake (13.4.2)
     rbs (4.2.0)
       logger
@@ -49,6 +51,7 @@ DEPENDENCIES
   bundler (>= 2.2.33)
   filesize
   json
+  pstore
   rake (>= 12.3.3)
   rspec (~> 3.0)
   ruby-lsp

@@ -42,5 +42,6 @@ Gem::Specification.new do |spec|
   spec.add_runtime_dependency "thor", "~> 1.0"
   spec.add_runtime_dependency "text-table", "~> 1.2"
   spec.add_runtime_dependency "filesize", "~> 0.2"
+  spec.add_runtime_dependency "pstore"
   
 end
