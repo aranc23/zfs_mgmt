@@ -668,8 +668,10 @@ module ZfsMgmt
       return h[p] == v
     end
   end
-  def self.set_log_level(sev)
-    case sev
+  def self.set_log_level(sev = nil)
+    sev = ENV['ZFS_MGMT_LOGLEVEL'] if sev.nil? || sev.to_s.strip.empty?
+    return if sev.nil? || sev.to_s.strip.empty?
+    case sev.to_s.strip.downcase
     when 'debug'
       $logger.level = Logger::DEBUG
     when 'info'
@@ -680,8 +682,13 @@ module ZfsMgmt
       $logger.level = Logger::ERROR
     when 'fatal'
       $logger.level = Logger::FATAL
+    when 'unknown', 'off', 'none', 'silent'
+      $logger.level = Logger::UNKNOWN
+    when /\A\d+\z/
+      $logger.level = sev.to_i
     end
   end
+  set_log_level
   def self.zfs_send_all(options)
     zfs_managed_list(filter: options[:filter],
                      property_match: { 'zfsmgmt:send' => method(:prop_on?) }).each do |zfs,props,snaps|

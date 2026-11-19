@@ -535,12 +535,13 @@ RSpec.describe ZfsMgmt do
       expect(ZfsMgmt.key_comp?(h, "num", 99)).to be(false)
     end
 
-    it "sets $logger severity with .set_log_level" do
+    it "sets $logger severity with .set_log_level and falls back to ZFS_MGMT_LOGLEVEL" do
       old_level = $logger.level
+      old_env = ENV["ZFS_MGMT_LOGLEVEL"]
       begin
         ZfsMgmt.set_log_level("debug")
         expect($logger.level).to eq(Logger::DEBUG)
-        ZfsMgmt.set_log_level("info")
+        ZfsMgmt.set_log_level("INFO")
         expect($logger.level).to eq(Logger::INFO)
         ZfsMgmt.set_log_level("warn")
         expect($logger.level).to eq(Logger::WARN)
@@ -548,7 +549,20 @@ RSpec.describe ZfsMgmt do
         expect($logger.level).to eq(Logger::ERROR)
         ZfsMgmt.set_log_level("fatal")
         expect($logger.level).to eq(Logger::FATAL)
+        ZfsMgmt.set_log_level("unknown")
+        expect($logger.level).to eq(Logger::UNKNOWN)
+        ZfsMgmt.set_log_level("3")
+        expect($logger.level).to eq(3)
+
+        ENV["ZFS_MGMT_LOGLEVEL"] = "error"
+        ZfsMgmt.set_log_level
+        expect($logger.level).to eq(Logger::ERROR)
+
+        ENV["ZFS_MGMT_LOGLEVEL"] = "fatal"
+        ZfsMgmt.set_log_level(nil)
+        expect($logger.level).to eq(Logger::FATAL)
       ensure
+        ENV["ZFS_MGMT_LOGLEVEL"] = old_env
         $logger.level = old_level
       end
     end

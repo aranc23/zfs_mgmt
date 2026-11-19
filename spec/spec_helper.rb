@@ -5,6 +5,8 @@ SimpleCov.start do
   enable_coverage :branch
 end
 
+ENV["ZFS_MGMT_LOGLEVEL"] ||= "unknown"
+
 require "zfs_mgmt"
 
 RSpec.configure do |config|
