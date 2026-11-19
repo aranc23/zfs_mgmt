@@ -65,6 +65,7 @@ module ZfsMgmt
       'send',
       'remote',
       'destination',
+      'recv_state',
     ].map do |p|
       ['zfsmgmt',p].join(':')
     end
@@ -462,20 +463,7 @@ module ZfsMgmt
       com += mbuffer_command(options) if options[:mbuffer]
       com += pv_command(options,e) if options[:verbose] == 'pv'
 
-      recv = [ ZfsMgmt.global_options[:zfs_binary], 'recv', '-s' ]
-      recv.push('-n') if options[:noop]
-      recv.push('-u') if options[:unmount]
-      recv.push('-v') if options[:verbose] and ( options[:verbose] == 'receive' or options[:verbose] == 'recv' )
-      recv.push(dq(destination_path))
-
-      if options[:remote] or props['zfsmgmt:remote']
-        if options[:mbuffer]
-          recv = mbuffer_command(options) + recv
-        end
-        recv = recv_command_prefix(options,props) + [ sq(recv.join(' ')) ]
-      end
-
-      com += recv
+      com += zfs_recv_com(options,[],props,destination_path)
 
       status = system_com(com)
       record_send_state(zfs, status) unless options[:noop]
@@ -563,8 +551,19 @@ module ZfsMgmt
     end
     zfs_send_com + extra_opts + [dq(target),'|']
   end
+  def self.prop_off?(v)
+    ['false','off'].include?(v)
+  end
+  def self.recv_state_enabled?(options, props)
+    ['state', :state, 'recv_state', :recv_state].each do |k|
+      return options[k] if key_comp?(options, k, [true, false])
+    end
+    return false if key_comp?(props, 'zfsmgmt:recv_state', method(:prop_off?))
+    true
+  end
   def self.zfs_recv_com(options,extra_opts,props,target)
-    zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv', '-s' ]
+    zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv' ]
+    zfs_recv_com.push('-s') if recv_state_enabled?(options, props)
     recv_opts = {
       'noop'          => '-n',
       'drop_holds'    => '-h',
