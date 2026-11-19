@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    zfs_mgmt (0.5.6)
+    zfs_mgmt (0.6.0)
       filesize (~> 0.2)
       pstore
       text-table (~> 1.2)
@@ -19,7 +19,7 @@ GEM
     prism (1.9.0)
     pstore (0.2.1)
     rake (13.4.2)
-    rbs (4.2.0)
+    rbs (4.1.3)
       logger
       prism (>= 1.6.0)
       tsort
