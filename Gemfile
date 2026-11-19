@@ -8,6 +8,7 @@ gem "text-table"
 gem "filesize"
 gem "json"
 gem "timeout"
+gem "pstore"
 
 gem 'ruby-lsp', group: :development
 gemspec

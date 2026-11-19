@@ -42,4 +42,36 @@ class ZfsMgmt::ZfsMgr::Send < Thor
     ZfsMgmt.zfs_send_all(options)
     ZfsMgmt.unlock(lock)
   end
+
+  class State < Thor
+    class_option :filter, :type => :string, :default => '.+',
+                 :desc => 'only act on zfs matching this regexp'
+    default_command :show
+
+    desc "show", "print a table of the values in the state db"
+    method_option :check, :type => :boolean, :default => false,
+                  :desc => 'print a check_mk local style check output, one line for each entry in the db'
+    def show()
+      ZfsMgmt.set_log_level(options[:loglevel])
+      ZfsMgmt.global_options = options
+      ZfsMgmt.send_state_show(check: options[:check], filter: options[:filter])
+    end
+
+    desc "delete ZFS", "delete a key from the state db"
+    def delete(zfs)
+      ZfsMgmt.set_log_level(options[:loglevel])
+      ZfsMgmt.global_options = options
+      ZfsMgmt.send_state_delete(zfs)
+    end
+
+    desc "wipe", "remove all keys in state db"
+    def wipe()
+      ZfsMgmt.set_log_level(options[:loglevel])
+      ZfsMgmt.global_options = options
+      ZfsMgmt.send_state_wipe
+    end
+  end
+
+  desc "state [SUBCOMMAND ...ARGS]", "manage zfs send state database"
+  subcommand "state", State
 end
