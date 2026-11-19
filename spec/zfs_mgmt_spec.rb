@@ -318,6 +318,81 @@ RSpec.describe ZfsMgmt do
       expect(ZfsMgmt).to receive(:send_state_wipe)
       described_class.start(["state", "wipe"])
     end
+
+    describe "#all recv_state CLI flags" do
+      before do
+        allow(ZfsMgmt).to receive(:lock).and_return(nil)
+        allow(ZfsMgmt).to receive(:unlock)
+      end
+
+      it "passes recv_state: false when --no-recv-state is given" do
+        expect(ZfsMgmt).to receive(:zfs_send_all) do |opts|
+          expect(opts[:recv_state]).to eq(false)
+        end
+        described_class.start(["all", "--no-recv-state"])
+      end
+
+      it "passes recv_state: true when --recv-state is given" do
+        expect(ZfsMgmt).to receive(:zfs_send_all) do |opts|
+          expect(opts[:recv_state]).to eq(true)
+        end
+        described_class.start(["all", "--recv-state"])
+      end
+
+      it "passes recv_state: true when -s is given" do
+        expect(ZfsMgmt).to receive(:zfs_send_all) do |opts|
+          expect(opts[:recv_state]).to eq(true)
+        end
+        described_class.start(["all", "-s"])
+      end
+    end
+  end
+
+  describe ".zfs_recv_com" do
+    before do
+      ZfsMgmt.global_options = {
+        zfs_binary: "zfs",
+        mbuffer_binary: "mbuffer"
+      }
+    end
+
+    it "includes -s by default when neither CLI option nor zfsmgmt:recv_state property is set" do
+      com = ZfsMgmt.zfs_recv_com({}, [], {}, "backup/pool/fs")
+      expect(com).to eq(["zfs", "recv", "-s", '"backup/pool/fs"'])
+    end
+
+    it "includes -s when zfsmgmt:recv_state is true or on" do
+      expect(ZfsMgmt.zfs_recv_com({}, [], { "zfsmgmt:recv_state" => "true" }, "backup/pool/fs")).to include("-s")
+      expect(ZfsMgmt.zfs_recv_com({}, [], { "zfsmgmt:recv_state" => "on" }, "backup/pool/fs")).to include("-s")
+    end
+
+    it "omits -s when zfsmgmt:recv_state is false or off" do
+      com_false = ZfsMgmt.zfs_recv_com({}, [], { "zfsmgmt:recv_state" => "false" }, "backup/pool/fs")
+      expect(com_false).to eq(["zfs", "recv", '"backup/pool/fs"'])
+
+      com_off = ZfsMgmt.zfs_recv_com({}, [], { "zfsmgmt:recv_state" => "off" }, "backup/pool/fs")
+      expect(com_off).to eq(["zfs", "recv", '"backup/pool/fs"'])
+    end
+
+    it "omits -s when CLI option recv_state is false, overriding property" do
+      com = ZfsMgmt.zfs_recv_com(
+        Thor::CoreExt::HashWithIndifferentAccess.new(recv_state: false),
+        [],
+        { "zfsmgmt:recv_state" => "true" },
+        "backup/pool/fs"
+      )
+      expect(com).to eq(["zfs", "recv", '"backup/pool/fs"'])
+    end
+
+    it "includes -s when CLI option recv_state is true, overriding zfsmgmt:recv_state=false" do
+      com = ZfsMgmt.zfs_recv_com(
+        Thor::CoreExt::HashWithIndifferentAccess.new(recv_state: true),
+        [],
+        { "zfsmgmt:recv_state" => "false" },
+        "backup/pool/fs"
+      )
+      expect(com).to eq(["zfs", "recv", "-s", '"backup/pool/fs"'])
+    end
   end
 
   def capture_stdout
