@@ -9,6 +9,7 @@ gem "filesize"
 gem "json"
 gem "timeout"
 gem "pstore"
+gem "easy_talk"
 
 gem 'ruby-lsp', group: :development
 gemspec

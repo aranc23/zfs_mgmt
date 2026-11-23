@@ -1,6 +1,7 @@
 # coding: utf-8
 require "zfs_mgmt/version"
 require "thor"
+require "zfs_mgmt/zfs"
 require "zfs_mgmt/restic"
 require "zfs_mgmt/zfs_mgr"
 require 'pp'
@@ -176,18 +177,25 @@ module ZfsMgmt
     end
     return [results['hourly'],results['daily'],results['weekly'],results['monthly'],results['yearly']]
   end
-  def self.snapshot_destroy_policy(zfs,props,snaps)
+  def self.snapshot_destroy_policy(zfs, props = nil, snaps = nil)
+    if zfs.is_a?(ZfsMgmt::Zfs)
+      zfs_obj = zfs
+      snaps ||= zfs_obj.snapshots
+    else
+      zfs_obj = ZfsMgmt::Zfs.from_zfs_props(zfs, props)
+    end
+
     minage = 0
-    if props.has_key?('zfsmgmt:minage')
-      minage = timespec_to_seconds(props['zfsmgmt:minage'])
+    if zfs_obj.minage
+      minage = timespec_to_seconds(zfs_obj.minage)
     end
     strategy = 'oldest'
-    if props.has_key?('zfsmgmt:strategy') and props['zfsmgmt:strategy'] == 'youngest'
+    if zfs_obj.strategy == 'youngest'
       strategy = 'youngest'
     end
     sorted = snaps.keys.sort { |a,b| snaps[b]['creation'] <=> snaps[a]['creation'] }
     
-    counters = policy_parser(props['zfsmgmt:policy'])
+    counters = policy_parser(zfs_obj.policy)
     $logger.debug(counters)
     saved = {}
 
@@ -197,23 +205,22 @@ module ZfsMgmt
     end
 
     sorted.each do |snap_name|
-      if  props.has_key?('zfsmgmt:ignoresnaps') and /#{props['zfsmgmt:ignoresnaps']}/ =~ snap_name.split('@')[1]
-        $logger.debug("skipping #{snap_name} because it matches ignoresnaps pattern: #{props['zfsmgmt:ignoresnaps']}")
+      if zfs_obj.ignoresnaps and /#{zfs_obj.ignoresnaps}/ =~ snap_name.split('@')[1]
+        $logger.debug("skipping #{snap_name} because it matches ignoresnaps pattern: #{zfs_obj.ignoresnaps}")
         next
       end
-      if  props.has_key?('zfsmgmt:matchsnaps') and not /#{props['zfsmgmt:matchsnaps']}/ =~ snap_name.split('@')[1]
-        $logger.debug("skipping #{snap_name} because it does not match matchsnaps pattern: #{props['zfsmgmt:matchsnaps']}")
+      if zfs_obj.matchsnaps and not /#{zfs_obj.matchsnaps}/ =~ snap_name.split('@')[1]
+        $logger.debug("skipping #{snap_name} because it does not match matchsnaps pattern: #{zfs_obj.matchsnaps}")
         next
       end
       snaptime = local_epoch_to_datetime(snaps[snap_name]['creation'])
       $date_patterns.each do |d,p|
         pat = snaptime.strftime(p)
         if saved[d].has_key?(pat)
-          #pp props['zfsmgmt:prefersnaps'],snap_name.split('@')[1], saved[d][pat].split('@')[1]
-          if props.has_key?('zfsmgmt:prefersnaps') and /#{props['zfsmgmt:prefersnaps']}/ !~ saved[d][pat].split('@')[1] and /#{props['zfsmgmt:prefersnaps']}/ =~ snap_name.split('@')[1]
+          if zfs_obj.prefersnaps and /#{zfs_obj.prefersnaps}/ !~ saved[d][pat].split('@')[1] and /#{zfs_obj.prefersnaps}/ =~ snap_name.split('@')[1]
             $logger.debug("updating the saved snapshot, we prefer this one: \"#{pat}\" to #{snap_name} at #{snaptime}")
             saved[d][pat] = snap_name
-          elsif strategy == 'oldest' and ( not props.has_key?('zfsmgmt:prefersnaps') or /#{props['zfsmgmt:prefersnaps']}/ =~ snap_name.split('@')[1] )
+          elsif strategy == 'oldest' and ( not zfs_obj.prefersnaps or /#{zfs_obj.prefersnaps}/ =~ snap_name.split('@')[1] )
             # update the existing current save snapshot for this timeframe
             $logger.debug("updating the saved snapshot for \"#{pat}\" to #{snap_name} at #{snaptime}")
             saved[d][pat] = snap_name
@@ -239,8 +246,8 @@ module ZfsMgmt
     # delete everything not in the list of saved snapshots
     deleteme = sorted - saved_snaps
     deleteme = deleteme.select { |snap|
-      if props.has_key?('zfsmgmt:ignoresnaps') and /#{props['zfsmgmt:ignoresnaps']}/ =~ snap.split('@')[1]
-        $logger.debug("skipping #{snap} because it matches ignoresnaps pattern: #{props['zfsmgmt:ignoresnaps']}")
+      if zfs_obj.ignoresnaps and /#{zfs_obj.ignoresnaps}/ =~ snap.split('@')[1]
+        $logger.debug("skipping #{snap} because it matches ignoresnaps pattern: #{zfs_obj.ignoresnaps}")
         false
       elsif minage > 0 and Time.at(snaps[snap]['creation'] + minage) > Time.now()
         $logger.debug("skipping due to minage: #{snap} #{local_epoch_to_datetime(snaps[snap]['creation']).strftime('%F %T')}")
@@ -254,53 +261,61 @@ module ZfsMgmt
     }
     return saved,saved_snaps,deleteme
   end
-  def self.zfs_managed_list(filter: '.+', properties: ['all'], property_match: { 'zfsmgmt:manage' => method(:prop_on?) } )
-    zfss = [] # array of arrays
-    zfsget(properties: properties).each do |zfs,props|
-      unless /#{filter}/ =~ zfs
+  def self.zfs_managed_list(filter: '.+', properties: ['all'], property_match: { manage: true } )
+    zfss = []
+    zfsget(properties: properties).each do |zfs_name,props|
+      unless match_filter?(zfs_name, filter)
         next
       end
+      zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, props)
       managed = true
       property_match.each do |k,v|
-        unless key_comp?(props,k,v)
+        matched = if k.to_s.start_with?('zfsmgmt:')
+                    key_comp?(props, k, v)
+                  else
+                    attr_name = (k.to_sym == :send ? :send_enabled : k.to_sym)
+                    match_value?(zfs.public_send(attr_name), v)
+                  end
+        unless matched
           managed = false
           break
         end
       end
       next unless managed
-      snaps = self.zfsget(properties: ['name','creation','userrefs','used','written','referenced'],types: ['snapshot'], zfs: zfs)
-      if snaps.length == 0
-        $logger.debug("not processing #{zfs} as there are no snapshots")
-        next
-      end
-      zfss.push([zfs,props,snaps])
+      zfss.push(zfs)
     end
     return zfss
   end
   def self.snapshot_policy(filter: '.+', show_destroy: false)
-    zfs_managed_list(filter: filter).each do |zfs,props,snaps|
-      unless props.has_key?('zfsmgmt:policy')
-        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no policy configuration in zfsmgmt:policy, skipping")
+    zfs_managed_list(filter: filter).each do |zfs|
+      unless zfs.policy
+        $logger.error("zfs_mgmt is configured to manage #{zfs.name}, but there is no policy configuration in zfsmgmt:policy, skipping")
         next # zfs
+      end
+
+      snaps = zfs.snapshots
+      if snaps.empty?
+        $logger.debug("not processing #{zfs.name} as there are no snapshots")
+        next
       end
 
       begin
         # call the function that decides who to save and who to delete
-        (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs,props,snaps)
+        (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs)
       rescue ArgumentError
-        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
+        $logger.error("zfs_mgmt is configured to manage #{zfs.name}, but there is no valid policy configuration, skipping")
         next
       end
 
       snaps_to_show = show_destroy ? (saved_snaps + deleteme).uniq : saved_snaps
 
       if snaps_to_show.length == 0
-        $logger.info("no snapshots marked as saved by policy for #{zfs}")
+        $logger.info("no snapshots marked as saved by policy for #{zfs.name}")
         next
       end
       # print a table of saved snapshots with the reasons it is being saved
       table = Text::Table.new
-      table.head = [zfs,'creation','hourly','daily','weekly','monthly','yearly']
+      table.head = [zfs.name,'creation','hourly','daily','weekly','monthly','yearly']
       table.rows = []
       snaps_to_show.sort { |a,b| snaps[b]['creation'] <=> snaps[a]['creation'] }.each do |snap|
         table.rows << [snap.split('@')[1],local_epoch_to_datetime(snaps[snap]['creation'])] + find_saved_reason(saved,snap)
@@ -309,21 +324,27 @@ module ZfsMgmt
     end
   end
   def self.snapshot_destroy(noop: false, verbose: false, filter: '.+')
-    zfs_managed_list(filter: filter).each do |zfs,props,snaps|
-      unless props.has_key?('zfsmgmt:policy')
-        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no policy configuration in zfsmgmt:policy, skipping")
+    zfs_managed_list(filter: filter).each do |zfs|
+      unless zfs.policy
+        $logger.error("zfs_mgmt is configured to manage #{zfs.name}, but there is no policy configuration in zfsmgmt:policy, skipping")
         next # zfs
+      end
+
+      snaps = zfs.snapshots
+      if snaps.empty?
+        $logger.debug("not processing #{zfs.name} as there are no snapshots")
+        next
       end
 
       begin
         # call the function that decides who to save and who to delete
-        (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs,props,snaps)
+        (saved,saved_snaps,deleteme) = snapshot_destroy_policy(zfs)
       rescue ArgumentError
-        $logger.error("zfs_mgmt is configured to manage #{zfs}, but there is no valid policy configuration, skipping")
+        $logger.error("zfs_mgmt is configured to manage #{zfs.name}, but there is no valid policy configuration, skipping")
         next
       end
     
-      $logger.info("deleting #{deleteme.length} snapshots for #{zfs}")
+      $logger.info("deleting #{deleteme.length} snapshots for #{zfs.name}")
       deleteme.reverse! # oldest first for removal
       deleteme.each do |snap_name|
         $logger.debug("delete: #{snap_name} #{local_epoch_to_datetime(snaps[snap_name]['creation']).strftime('%F %T')}")
@@ -337,7 +358,7 @@ module ZfsMgmt
         for i in 0..(deleteme.length - 1) do
           max = deleteme.length - 1 - i
           $logger.debug("attempting to remove snaps 0 through #{max} out of #{deleteme.length} snapshots")
-          bigarg = "#{zfs}@#{deleteme[0..max].map { |s| s.split('@')[1] }.join(',')}"
+          bigarg = "#{zfs.name}@#{deleteme[0..max].map { |s| s.split('@')[1] }.join(',')}"
           com = com_base + [bigarg]
           $logger.debug("size of bigarg: #{bigarg.length} size of com: #{com.length}")
           if bigarg.length >= 131072 or com.length >= (2097152-10000)
@@ -369,23 +390,14 @@ module ZfsMgmt
   # snapshot all filesystems configured for snapshotting
   def self.snapshot_create(noop: false, filter: '.+')
     dt = DateTime.now
-    zfsget.select { |zfs,props|
-      # must match filter
-      match_filter?(zfs, filter) and
-        # snapshot must be on or true
-        (
-          key_comp?(props,'zfsmgmt:snapshot') or
-          # or snapshot can be recursive and local, but only if the source is local or received
-          ( key_comp?(props,'zfsmgmt:snapshot',['recursive','local']) and key_comp?(props,'zfsmgmt:snapshot@source',['local','received']) )
-        )
-    }.each do |zfs,props|
-      prefix = ( props.has_key?('zfsmgmt:snap_prefix') ? props['zfsmgmt:snap_prefix'] : 'zfsmgmt' )
-      ts = ( props.has_key?('zfsmgmt:snap_timestamp') ? props['zfsmgmt:snap_timestamp'] : '%FT%T%z' )
-      com = [global_options['zfs_binary'],'snapshot']
-      if key_comp?(props,'zfsmgmt:snapshot','recursive') and key_comp?(props,'zfsmgmt:snapshot@source',['local','received'])
-        com.push('-r')
-      end
-      com.push("#{zfs}@#{[prefix,dt.strftime(ts)].join('-')}")
+    zfs_managed_list(filter: filter, property_match: { snapshot: true }).each do |zfs|
+      next unless zfs.snapshot
+
+      prefix = zfs.snap_prefix || 'zfsmgmt'
+      ts = zfs.snap_timestamp || '%FT%T%z'
+      com = [global_options['zfs_binary'] || global_options[:zfs_binary], 'snapshot']
+      com.push('-r') if zfs.snapshot_recursive
+      com.push("#{zfs.name}@#{[prefix,dt.strftime(ts)].join('-')}")
       system_com(com,noop)
     end
   end
@@ -400,29 +412,25 @@ module ZfsMgmt
       return $?
     end
   end
-  def self.zfs_send(options,zfs,props,snaps)
-    sorted = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }
-    # compute the zfs "path"
-    # ternary operator 4eva
-    destination_path = ( options[:destination] ? options[:destination] : props['zfsmgmt:destination'] )
-    if props['zfsmgmt:destination@source'] == 'local'
-      destination_path = File.join( destination_path,
-                                    File.basename(zfs)
-                                  )
-    elsif m = /inherited from (.+)/.match(props['zfsmgmt:destination@source'])
-      destination_path = File.join( destination_path,
-                                    File.basename(m[1]),
-                                    zfs.sub(m[1],'')
-                                  )
+  def self.zfs_send(options, zfs, props = nil, snaps = nil)
+    if zfs.is_a?(ZfsMgmt::Zfs)
+      zfs_obj = zfs
+      snaps ||= zfs_obj.snapshots
     else
-      $logger.error("fatal error: #{props['zfsmgmt:destination']} source: #{props['zfsmgmt:destination@source']}")
+      zfs_obj = ZfsMgmt::Zfs.from_zfs_props(zfs, props)
+    end
+    zfs_name = zfs_obj.name
+    sorted = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }
+    destination_path = zfs_obj.resolved_destination(options[:destination])
+    unless destination_path
+      $logger.error("fatal error: unable to determine destination path for #{zfs_name}")
       exit(1)
     end
     # does the destination zfs already exist?
     remote_zfs_state = ''
     begin
       recv_zfs = zfsget(zfs: destination_path,
-                        command_prefix: recv_command_prefix(options,props),
+                        command_prefix: recv_command_prefix(options, zfs_obj),
                         #properties: ['receive_resume_token'],
                        )
     rescue ZfsDatasetNotFoundError
@@ -445,21 +453,21 @@ module ZfsMgmt
       source = sorted[0]
       if options[:initial_snapshot] == 'newest' or
         key_comp?(options, 'replicate') or
-        key_comp?(props, 'zfsmgmt:send_replicate')
+        zfs_obj.send_replicate
         source = sorted[-1]
       end
       com += zfs_send_com(options,
-                          props,
+                          zfs_obj,
                           [],
                           source,
                          )
       e = zfs_send_estimate(com) if options[:verbose] == 'pv'
       com += mbuffer_command(options) if options[:mbuffer]
       com += pv_command(options,e) if options[:verbose] == 'pv'
-      com += zfs_recv_com(options,[],props,destination_path)
+      com += zfs_recv_com(options,[],zfs_obj,destination_path)
  
       status = system_com(com)
-      record_send_state(zfs, status) unless options[:noop]
+      record_send_state(zfs_name, status) unless options[:noop]
       unless status && status.success?
         return
       end
@@ -474,10 +482,10 @@ module ZfsMgmt
       com += mbuffer_command(options) if options[:mbuffer]
       com += pv_command(options,e) if options[:verbose] == 'pv'
 
-      com += zfs_recv_com(options,[],props,destination_path)
+      com += zfs_recv_com(options,[],zfs_obj,destination_path)
 
       status = system_com(com)
-      record_send_state(zfs, status) unless options[:noop]
+      record_send_state(zfs_name, status) unless options[:noop]
       unless status && status.success?
         return
       end
@@ -487,7 +495,7 @@ module ZfsMgmt
     begin
       remote_snaps = zfsget(zfs: destination_path,
                             types: ['snapshot'],
-                            command_prefix: recv_command_prefix(options,props),
+                            command_prefix: recv_command_prefix(options, zfs_obj),
                             properties: ['creation','userrefs'],
                            )
     rescue ZfsGetError
@@ -498,36 +506,34 @@ module ZfsMgmt
       $logger.error("receiving filesystem has NO snapshots, it must be destroyed: #{destination_path}")
       return
     end
-    if remote_snaps.has_key?(sorted[-1].sub(zfs,destination_path))
-      $logger.info("the most recent local snapshot (#{sorted[-1]}) already exists on the remote side (#{sorted[-1].sub(zfs,destination_path)})")
+    if remote_snaps.has_key?(sorted[-1].sub(zfs_name,destination_path))
+      $logger.info("the most recent local snapshot (#{sorted[-1]}) already exists on the remote side (#{sorted[-1].sub(zfs_name,destination_path)})")
       return
     end
     remote_snaps.sort_by { |k,v| -v['creation'] }.each do |rsnap,v|
       # oldest first
-      #pp rsnap,rsnap.sub(destination_path,zfs)
-      #pp snaps
-      if snaps.has_key?(rsnap.sub(destination_path,zfs))
+      if snaps.has_key?(rsnap.sub(destination_path,zfs_name))
         $logger.debug("process #{rsnap} to #{sorted[-1]}")
         com = []
         i_opt = '-i'
         # allow the command line option for intermediary to override the property
         if key_comp?(options,'intermediary',[true,false])
           i_opt = '-I' if key_comp?(options, 'intermediary', true)
-        elsif key_comp?(props, 'zfsmgmt:send_intermediary')
+        elsif zfs_obj.send_intermediary
           i_opt = '-I'
         end
 
-        com += zfs_send_com(options,props,[i_opt, dq('@' + rsnap.split('@')[1])], sorted[-1])
+        com += zfs_send_com(options,zfs_obj,[i_opt, dq('@' + rsnap.split('@')[1])], sorted[-1])
         e = zfs_send_estimate(com) if options[:verbose] == 'pv'
         com += mbuffer_command(options) if options[:mbuffer]
         com += pv_command(options,e) if options[:verbose] == 'pv'
-        com += zfs_recv_com(options,[],props,destination_path)
+        com += zfs_recv_com(options,[],zfs_obj,destination_path)
 
         status = system_com(com)
-        record_send_state(zfs, status) unless options[:noop]
+        record_send_state(zfs_name, status) unless options[:noop]
         return
       end
-      $logger.debug("skipping remote snapshot #{rsnap} because the same snapshot doesn't exist locally #{rsnap.sub(destination_path,zfs)}")
+      $logger.debug("skipping remote snapshot #{rsnap} because the same snapshot doesn't exist locally #{rsnap.sub(destination_path,zfs_name)}")
     end
     $logger.error("receiving filesystem has no snapshots that still exists on the sending side, it must be destroyed: #{destination_path}")
     
@@ -540,6 +546,7 @@ module ZfsMgmt
     mbuffer_command
   end
   def self.zfs_send_com(options,props,extra_opts,target)
+    zfs_obj = props.is_a?(ZfsMgmt::Zfs) ? props : ZfsMgmt::Zfs.from_zfs_props('', props)
     zfs_send_com = [ ZfsMgmt.global_options[:zfs_binary], 'send' ]
     zfs_send_com.push('-v','-P') if key_comp?(options,'verbose','send')
     send_opts = {
@@ -556,7 +563,7 @@ module ZfsMgmt
       # allow the command line options to override the properties value
       if key_comp?(options,p,[true,false])
         zfs_send_com.push(o) if key_comp?(options,p,true)
-      elsif key_comp?(props,"zfsmgmt:send_#{p}")
+      elsif zfs_obj.public_send("send_#{p}")
         zfs_send_com.push(o)
       end
     end
@@ -569,12 +576,14 @@ module ZfsMgmt
     ['state', :state, 'recv_state', :recv_state].each do |k|
       return options[k] if key_comp?(options, k, [true, false])
     end
+    return props.recv_state if props.is_a?(ZfsMgmt::Zfs)
     return false if key_comp?(props, 'zfsmgmt:recv_state', method(:prop_off?))
     true
   end
   def self.zfs_recv_com(options,extra_opts,props,target)
+    zfs_obj = props.is_a?(ZfsMgmt::Zfs) ? props : ZfsMgmt::Zfs.from_zfs_props('', props)
     zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv' ]
-    zfs_recv_com.push('-s') if recv_state_enabled?(options, props)
+    zfs_recv_com.push('-s') if recv_state_enabled?(options, zfs_obj)
     recv_opts = {
       'noop'          => '-n',
       'drop_holds'    => '-h',
@@ -587,7 +596,7 @@ module ZfsMgmt
       # allow the command line options to override the properties value
       if key_comp?(options,p,[true,false])
         zfs_recv_com.push(o) if key_comp?(options,p,true)
-      elsif key_comp?(props,"zfsmgmt:recv_#{p}")
+      elsif zfs_obj.public_send("recv_#{p}")
         zfs_recv_com.push(o)
       end
     end
@@ -605,18 +614,17 @@ module ZfsMgmt
     zfs_recv_com += extra_opts
     zfs_recv_com.push(dq(target))
 
-    if options[:remote] or props['zfsmgmt:remote']
+    if options[:remote] or zfs_obj.remote
       if options[:mbuffer]
         zfs_recv_com = mbuffer_command(options) + zfs_recv_com
       end
-      zfs_recv_com = recv_command_prefix(options,props) + [ sq(zfs_recv_com.join(' ')) ]
+      zfs_recv_com = recv_command_prefix(options, zfs_obj) + [ sq(zfs_recv_com.join(' ')) ]
     end
     zfs_recv_com
   end
   def self.recv_command_prefix(options,props)
-    ( (options[:remote] or props['zfsmgmt:remote']) ?
-        [ 'ssh', ( options[:remote] ? options[:remote] : props['zfsmgmt:remote'] ) ] :
-        [] )
+    remote = options[:remote] || (props.is_a?(ZfsMgmt::Zfs) ? props.remote : props['zfsmgmt:remote'])
+    remote ? [ 'ssh', remote ] : []
   end
   def self.zfs_send_estimate(com)
     lcom = com.dup
@@ -663,21 +671,24 @@ module ZfsMgmt
   def self.match_filter?(zfs, filter)
     /#{filter}/ =~ zfs
   end
+  def self.match_value?(actual, expected)
+    if expected.kind_of?(Array)
+      return expected.include?(actual)
+    elsif expected.kind_of?(Hash)
+      return expected.keys.include?(actual)
+    elsif expected.kind_of?(Method) || expected.kind_of?(Proc)
+      return expected.call(actual)
+    elsif expected.kind_of?(Regexp)
+      return expected =~ actual
+    else
+      # string, boolean, numbers?
+      return actual == expected
+    end
+  end
   def self.key_comp?(h,p,v = method(:prop_on?))
     #$logger.debug("p:#{p}\th[p]:#{h[p]}\tv:#{v}")
     return false unless h.has_key?(p)
-    if v.kind_of?(Array)
-      return v.include?(h[p])
-    elsif v.kind_of?(Hash)
-      return v.keys.include?(h[p])
-    elsif v.kind_of?(Method)
-      return v.call(h[p])
-    elsif v.kind_of?(Regexp)
-      return v =~ h[p]
-    else
-      # string, boolean, numbers?
-      return h[p] == v
-    end
+    match_value?(h[p], v)
   end
   def self.set_log_level(sev = nil)
     sev = ENV['ZFS_MGMT_LOGLEVEL'] if sev.nil? || sev.to_s.strip.empty?
@@ -702,21 +713,20 @@ module ZfsMgmt
   set_log_level
   def self.zfs_send_all(options)
     zfs_managed_list(filter: options[:filter],
-                     property_match: { 'zfsmgmt:send' => method(:prop_on?) }).each do |zfs,props,snaps|
-      
-      if props['zfsmgmt:send@source'] == 'received'
-        $logger.debug("skipping received filesystem: #{zfs}")
+                     property_match: { send_enabled: true }).each do |zfs|
+      unless zfs.send_enabled
+        $logger.debug("skipping filesystem with send disabled: #{zfs.name}")
         next
       end
-      if key_comp?(props,'zfsmgmt:send_replicate') and props['zfsmgmt:send_replicate@source'] != 'local'
-        $logger.debug("skipping descendant of replicated filesystems: #{zfs}")
+      unless zfs.destination
+        $logger.error("#{zfs.name}: you must specify a destination zfs path via the user property zfsmgmt:destination, even if using --destination on the command line, skipping")
         next
       end
-      unless props['zfsmgmt:destination']
-        $logger.error("#{zfs}: you must specify a destination zfs path via the user property zfsmgmt:destination, even if using --destination on the command line, skipping")
+      if zfs.snapshots.empty?
+        $logger.debug("not processing #{zfs.name} as there are no snapshots")
         next
       end
-      zfs_send(options,zfs,props,snaps)
+      zfs_send(options, zfs)
     end
   end
   def self.lock(options)

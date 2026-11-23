@@ -12,10 +12,11 @@ module ZfsMgmt::Restic
     if options.has_key?('password_file')
       com.push('-p',options['password_file'])
     end
+    repo = props.is_a?(ZfsMgmt::Zfs) ? props.restic_repository : props['zfsmgmt:restic_repository']
     if options.has_key?('repo')
       com.push('--repo', options['repo'])
-    elsif props.has_key?('zfsmgmt:restic_repository')
-      com.push( '--repo', props['zfsmgmt:restic_repository'] )
+    elsif repo
+      com.push( '--repo', repo )
     end
 
     $logger.info("#{com.join(' ')}")
@@ -70,8 +71,10 @@ module ZfsMgmt::Restic
                                           'zfsmgmt:restic_repository',
                                           'userrefs',
                                          ],
-                             property_match: { 'zfsmgmt:restic_backup' => ['on','true'] }).each do |blob|
-      zfs,props,zfs_snapshots = blob
+                             property_match: { restic_backup: true }).each do |zfs_obj|
+      zfs = zfs_obj.name
+      zfs_snapshots = zfs_obj.snapshots
+      next if zfs_snapshots.empty?
       last_zfs_snapshot = zfs_snapshots.keys.sort { |a,b| zfs_snapshots[a]['creation'] <=> zfs_snapshots[b]['creation'] }.last
       zfs_snap_time = Time.at(zfs_snapshots[last_zfs_snapshot]['creation'])
 
@@ -79,7 +82,7 @@ module ZfsMgmt::Restic
       chain = []
       zfs_snap_parent = ''
       restic_snap_parent = ''
-      (restic_snapshots,restic_snapshot_zfs_snapshot_index) = restic_snapshots(zfs,options,props)
+      (restic_snapshots,restic_snapshot_zfs_snapshot_index) = restic_snapshots(zfs,options,zfs_obj)
       if restic_snapshot_zfs_snapshot_index.has_key?(last_zfs_snapshot)
         $logger.warn("backup of this snapshot #{last_zfs_snapshot} already exists in restic, cannot continue with backup of #{zfs}")
         next # next zfs filesystem to be backed up
@@ -132,8 +135,8 @@ module ZfsMgmt::Restic
       end
       if options.has_key?('repo')
         com.push('--repo', options['repo'])
-      elsif props.has_key?('zfsmgmt:restic_repository')
-        com.push( '--repo', props['zfsmgmt:restic_repository'] )
+      elsif zfs_obj.restic_repository
+        com.push( '--repo', zfs_obj.restic_repository )
       end
       if options[:verbose]
         com.push('--verbose',options[:verbose])
