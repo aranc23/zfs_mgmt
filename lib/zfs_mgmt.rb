@@ -593,6 +593,17 @@ module ZfsMgmt
       zfs_obj.recv_discard_first
     end
   end
+  VOLUME_UNSUPPORTED_RECV_PROPERTIES = %w[
+    canmount
+    mountpoint
+    quota
+  ].freeze
+
+  def self.unsupported_volume_recv_prop?(prop_spec)
+    prop_name = prop_spec.to_s.split('=', 2).first.to_s.strip.downcase
+    VOLUME_UNSUPPORTED_RECV_PROPERTIES.include?(prop_name)
+  end
+
   def self.zfs_recv_com(options,extra_opts,props,target)
     zfs_obj = props.is_a?(ZfsMgmt::Zfs) ? props : ZfsMgmt::Zfs.from_zfs_props('', props)
     zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv' ]
@@ -613,14 +624,16 @@ module ZfsMgmt
       end
     end
     zfs_recv_com.push('-v') if key_comp?(options, 'verbose', ['receive', 'recv'])
-    if options[:exclude]
-      options[:exclude].each do |x|
-        zfs_recv_com.push('-x',x)
-      end
-    end
-    if options[:option]
-      options[:option].each do |x|
-        zfs_recv_com.push('-o',x)
+    volume = zfs_obj.volume?
+    [['-x', options[:exclude]], ['-o', options[:option]]].each do |flag, values|
+      next unless values
+
+      values.each do |val|
+        if volume && unsupported_volume_recv_prop?(val)
+          $logger.debug("skipping #{flag} #{val} for volume #{zfs_obj.name}")
+          next
+        end
+        zfs_recv_com.push(flag, val)
       end
     end
     zfs_recv_com += extra_opts

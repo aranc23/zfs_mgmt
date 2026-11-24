@@ -438,6 +438,39 @@ RSpec.describe ZfsMgmt do
         "'zfs recv -s -u -F \"backup/pool/fs\"'"
       ])
     end
+
+    it "omits volume-unsupported properties from -x and -o when receiving a volume" do
+      opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+        exclude: %w[mountpoint canmount quota sharenfs],
+        option: %w[mountpoint=none canmount=off quota=10G readonly=on]
+      )
+      vol_props = { "type" => "volume" }
+      com = ZfsMgmt.zfs_recv_com(opts, [], vol_props, "backup/pool/zvol")
+      expect(com).to eq([
+        "zfs", "recv", "-s", "-x", "sharenfs", "-o", "readonly=on", '"backup/pool/zvol"'
+      ])
+
+      vol_obj = ZfsMgmt::Zfs.new(name: "tank/zvol", type: "volume")
+      com_obj = ZfsMgmt.zfs_recv_com(opts, [], vol_obj, "backup/pool/zvol")
+      expect(com_obj).to eq([
+        "zfs", "recv", "-s", "-x", "sharenfs", "-o", "readonly=on", '"backup/pool/zvol"'
+      ])
+    end
+
+    it "passes mountpoint, canmount, and quota in -x and -o when receiving a filesystem" do
+      opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+        exclude: %w[mountpoint canmount quota],
+        option: %w[mountpoint=none canmount=off quota=10G]
+      )
+      fs_props = { "type" => "filesystem" }
+      com = ZfsMgmt.zfs_recv_com(opts, [], fs_props, "backup/pool/fs")
+      expect(com).to eq([
+        "zfs", "recv", "-s",
+        "-x", "mountpoint", "-x", "canmount", "-x", "quota",
+        "-o", "mountpoint=none", "-o", "canmount=off", "-o", "quota=10G",
+        '"backup/pool/fs"'
+      ])
+    end
   end
 
   describe ".custom_properties" do
