@@ -42,6 +42,12 @@ class ZfsMgr < Thor
   subcommand "restic", ZfsMgmt::ZfsMgr::Restic
   desc "send SUBCOMMAND ...ARGS", "send zfs"
   subcommand "send", ZfsMgmt::ZfsMgr::Send
+
+  map '--version' => :version
+  desc "version", "print zfs_mgmt version"
+  def version
+    puts "zfsmgr #{ZfsMgmt::VERSION}"
+  end
 end
 
 ZfsMgr.start(ARGV)
