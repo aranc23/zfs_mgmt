@@ -9,6 +9,7 @@ When asked to resolve a Github issue:
 2. **Branch & Implement (Local Shell):**
 * Use the local terminal/git CLI to branch from the default branch:
 ```bash
+git checkout master && git pull --rebase
 git checkout -b <type>/issue-<id>-<slug>
 ```
 
