@@ -13,11 +13,13 @@ class ZfsMgmt::ZfsMgr::List < Thor
     table = Text::Table.new
     table.head = ['zfs','snapshot','age']
     table.rows = []
-    ZfsMgmt.zfs_managed_list(filter: options[:filter]).each do |zfs,props,snaps|
+    ZfsMgmt.zfs_managed_list(filter: options[:filter]).each do |zfs|
+      snaps = zfs.snapshots
+      next if snaps.empty?
       last = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }.last
       snap_time = Time.at(snaps[last]['creation'])
       if snap_time < cutoff
-        line = [zfs,last.split('@')[1],snap_time]
+        line = [zfs.name,last.split('@')[1],snap_time]
         table.rows << line
         if options[:format] == 'tab'
           print line.join("\t"),"\n"
@@ -36,7 +38,9 @@ class ZfsMgmt::ZfsMgr::List < Thor
     table = Text::Table.new
     table.head = ['snapshot','userrefs','holds']
     table.rows = []
-    ZfsMgmt.zfs_managed_list(filter: options[:filter], property_match: {} ).each do |zfs,props,snaps|
+    ZfsMgmt.zfs_managed_list(filter: options[:filter], property_match: {} ).each do |zfs|
+      snaps = zfs.snapshots
+      next if snaps.empty?
       snaps.sort_by { |x,y| y['creation'] }.each do |snap,d|
         if d['userrefs'] > 0
           line = [snap,d['userrefs'].to_s,ZfsMgmt.zfs_holds(snap).join(',')]

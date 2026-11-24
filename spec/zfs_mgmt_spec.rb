@@ -31,8 +31,17 @@ RSpec.describe ZfsMgmt do
       }
     end
 
+    let(:zfs_obj) do
+      ZfsMgmt::Zfs.new(
+        name: zfs,
+        policy: "2d",
+        manage: true,
+        snapshots: snaps
+      )
+    end
+
     before do
-      allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([[zfs, props, snaps]])
+      allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([zfs_obj])
     end
 
     context "when show_destroy is false" do
@@ -635,31 +644,40 @@ RSpec.describe ZfsMgmt do
   end
 
   describe ".zfs_managed_list" do
-    it "filters filesystems by regex, property_match, and skips datasets without snapshots" do
+    it "filters filesystems by regex and property_match and returns Zfs instances without eagerly fetching snapshots" do
       allow(ZfsMgmt).to receive(:zfsget).with(properties: ["all"]).and_return({
-        "tank/managed" => { "zfsmgmt:manage" => "true" },
+        "tank/managed" => { "zfsmgmt:manage" => "true", "zfsmgmt:policy" => "7d" },
         "tank/unmanaged" => { "zfsmgmt:manage" => "false" },
-        "tank/nosnaps" => { "zfsmgmt:manage" => "on" },
+        "tank/also_managed" => { "zfsmgmt:manage" => "on" },
         "other/managed" => { "zfsmgmt:manage" => "true" }
       })
 
-      snaps_managed = { "tank/managed@s1" => { "creation" => 1000, "userrefs" => 0 } }
-      expect(ZfsMgmt).to receive(:zfsget).with(
-        properties: ["name", "creation", "userrefs", "used", "written", "referenced"],
-        types: ["snapshot"],
-        zfs: "tank/managed"
-      ).and_return(snaps_managed)
-
-      expect(ZfsMgmt).to receive(:zfsget).with(
-        properties: ["name", "creation", "userrefs", "used", "written", "referenced"],
-        types: ["snapshot"],
-        zfs: "tank/nosnaps"
-      ).and_return({})
+      expect(ZfsMgmt).not_to receive(:zfsget).with(hash_including(types: ["snapshot"]))
 
       res = ZfsMgmt.zfs_managed_list(filter: "^tank/")
-      expect(res).to eq([
-        ["tank/managed", { "zfsmgmt:manage" => "true" }, snaps_managed]
-      ])
+      expect(res.length).to eq(2)
+      expect(res).to all(be_a(ZfsMgmt::Zfs))
+      expect(res.map(&:name)).to eq(["tank/managed", "tank/also_managed"])
+      expect(res.first.manage).to eq(true)
+      expect(res.first.policy).to eq("7d")
+      expect(res.first.snapshots_loaded?).to eq(false)
+    end
+
+    it "supports filtering by snapshot: true and send_enabled: true with source resolution" do
+      allow(ZfsMgmt).to receive(:zfsget).with(properties: ["all"]).and_return({
+        "tank/snap_local" => { "zfsmgmt:snapshot" => "recursive", "zfsmgmt:snapshot@source" => "local" },
+        "tank/snap_inherited" => { "zfsmgmt:snapshot" => "recursive", "zfsmgmt:snapshot@source" => "inherited from tank/snap_local" },
+        "tank/send_ok" => { "zfsmgmt:send" => "true", "zfsmgmt:send@source" => "local", "zfsmgmt:destination" => "b/p", "zfsmgmt:destination@source" => "local" },
+        "tank/send_recv" => { "zfsmgmt:send" => "true", "zfsmgmt:send@source" => "received", "zfsmgmt:destination" => "b/p", "zfsmgmt:destination@source" => "received" }
+      })
+
+      snap_list = ZfsMgmt.zfs_managed_list(property_match: { snapshot: true })
+      expect(snap_list.map(&:name)).to eq(["tank/snap_local"])
+      expect(snap_list.first.snapshot_recursive).to eq(true)
+
+      send_list = ZfsMgmt.zfs_managed_list(property_match: { send_enabled: true })
+      expect(send_list.map(&:name)).to eq(["tank/send_ok"])
+      expect(send_list.first.destination).to eq("b/p/send_ok")
     end
   end
 
@@ -755,22 +773,23 @@ RSpec.describe ZfsMgmt do
         "tank/data@s2" => { "creation" => Time.new(2026, 11, 16, 12, 0, 0).to_i },
         "tank/data@s1" => { "creation" => Time.new(2026, 11, 15, 12, 0, 0).to_i }
       }
-      props = { "zfsmgmt:policy" => "1d" }
-      allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([["tank/data", props, snaps]])
+      zfs_obj = ZfsMgmt::Zfs.new(name: "tank/data", manage: true, policy: "1d", snapshots: snaps)
+      allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([zfs_obj])
 
       expect(ZfsMgmt).to receive(:system_com).with(["zfs", "destroy", "-d", "-n", "-v", "tank/data@s1,s2"])
       ZfsMgmt.snapshot_destroy(noop: true, verbose: true, filter: "^tank/")
     end
 
-    it "skips filesystems with missing or invalid zfsmgmt:policy" do
-      snaps = { "tank/data@s1" => { "creation" => 1000 } }
-      allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([
-        ["tank/nopolicy", {}, snaps],
-        ["tank/badpolicy", { "zfsmgmt:policy" => "bogus" }, snaps]
-      ])
+    it "skips filesystems with missing or invalid zfsmgmt:policy without fetching snapshots for missing policy" do
+      snaps = { "tank/badpolicy@s1" => { "creation" => 1000 } }
+      nopolicy = ZfsMgmt::Zfs.new(name: "tank/nopolicy", manage: true)
+      badpolicy = ZfsMgmt::Zfs.new(name: "tank/badpolicy", manage: true, policy: "bogus", snapshots: snaps)
+      allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([nopolicy, badpolicy])
 
+      expect(ZfsMgmt).not_to receive(:zfsget)
       expect(ZfsMgmt).not_to receive(:system_com)
       ZfsMgmt.snapshot_destroy
+      expect(nopolicy.snapshots_loaded?).to eq(false)
     end
   end
 
@@ -953,22 +972,34 @@ RSpec.describe ZfsMgmt do
 
   describe ".zfs_send_all" do
     it "skips received filesystems, non-local replicated descendants, and filesystems without destination" do
-      snaps = { "tank/fs@s1" => { "creation" => 1000 } }
-      allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([
-        ["tank/received", { "zfsmgmt:send@source" => "received", "zfsmgmt:destination" => "b/p" }, snaps],
-        ["tank/rep_child", { "zfsmgmt:send_replicate" => "true", "zfsmgmt:send_replicate@source" => "inherited from tank", "zfsmgmt:destination" => "b/p" }, snaps],
-        ["tank/nodest", { "zfsmgmt:send@source" => "local" }, snaps],
-        ["tank/valid", { "zfsmgmt:send@source" => "local", "zfsmgmt:destination" => "b/p", "zfsmgmt:destination@source" => "local" }, snaps]
-      ])
+      snaps = { "tank/valid@s1" => { "creation" => 1000 } }
+      received = ZfsMgmt::Zfs.from_zfs_props("tank/received", {
+        "zfsmgmt:send" => "true", "zfsmgmt:send@source" => "received",
+        "zfsmgmt:destination" => "b/p", "zfsmgmt:destination@source" => "received"
+      })
+      rep_child = ZfsMgmt::Zfs.from_zfs_props("tank/rep_child", {
+        "zfsmgmt:send" => "true", "zfsmgmt:send@source" => "inherited from tank",
+        "zfsmgmt:send_replicate" => "true", "zfsmgmt:send_replicate@source" => "inherited from tank",
+        "zfsmgmt:destination" => "b/p", "zfsmgmt:destination@source" => "inherited from tank"
+      })
+      nodest = ZfsMgmt::Zfs.from_zfs_props("tank/nodest", {
+        "zfsmgmt:send" => "true", "zfsmgmt:send@source" => "local"
+      })
+      valid = ZfsMgmt::Zfs.from_zfs_props("tank/valid", {
+        "zfsmgmt:send" => "true", "zfsmgmt:send@source" => "local",
+        "zfsmgmt:destination" => "b/p", "zfsmgmt:destination@source" => "local"
+      })
+      valid.snapshots = snaps
 
-      expect(ZfsMgmt).to receive(:zfs_send).once.with(
-        { filter: ".+" },
-        "tank/valid",
-        hash_including("zfsmgmt:destination" => "b/p"),
-        snaps
-      )
+      allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([received, rep_child, nodest, valid])
+
+      expect(ZfsMgmt).not_to receive(:zfsget)
+      expect(ZfsMgmt).to receive(:zfs_send).once.with({ filter: ".+" }, valid)
 
       ZfsMgmt.zfs_send_all({ filter: ".+" })
+      expect(received.snapshots_loaded?).to eq(false)
+      expect(rep_child.snapshots_loaded?).to eq(false)
+      expect(nodest.snapshots_loaded?).to eq(false)
     end
   end
 
@@ -1042,18 +1073,19 @@ RSpec.describe ZfsMgmt do
       end
 
       it "performs an incremental restic backup, sets hold on current snapshot, and releases obsolete holds" do
-        zfs = "tank/fs"
-        props = {
-          "zfsmgmt:restic_backup" => "true",
-          "zfsmgmt:restic_repository" => "/srv/restic-repo"
-        }
         zfs_snapshots = {
           "tank/fs@old_held" => { "creation" => 1000, "userrefs" => 1 },
           "tank/fs@s1"       => { "creation" => 2000, "userrefs" => 1 },
           "tank/fs@s2"       => { "creation" => 3000, "userrefs" => 0 }
         }
+        zfs_obj = ZfsMgmt::Zfs.new(
+          name: "tank/fs",
+          restic_backup: true,
+          restic_repository: "/srv/restic-repo",
+          snapshots: zfs_snapshots
+        )
 
-        allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([[zfs, props, zfs_snapshots]])
+        allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([zfs_obj])
 
         restic_snap_s1 = {
           "time" => "2026-11-16T12:00:00Z",
@@ -1088,10 +1120,9 @@ RSpec.describe ZfsMgmt do
       end
 
       it "skips backup when latest snapshot already exists in restic index" do
-        zfs = "tank/fs"
-        props = { "zfsmgmt:restic_backup" => "true" }
         zfs_snapshots = { "tank/fs@s1" => { "creation" => 1000, "userrefs" => 1 } }
-        allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([[zfs, props, zfs_snapshots]])
+        zfs_obj = ZfsMgmt::Zfs.new(name: "tank/fs", restic_backup: true, snapshots: zfs_snapshots)
+        allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([zfs_obj])
 
         restic_snap_s1 = { "zfsmgmt:snapshot" => "tank/fs@s1", "zfsmgmt:level" => 0 }
         allow(ZfsMgmt::Restic).to receive(:restic_snapshots).and_return([
@@ -1118,8 +1149,8 @@ RSpec.describe ZfsMgmt do
 
       before do
         allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([
-          ["tank/stale", {}, { "tank/stale@oldsnap" => { "creation" => stale_time } }],
-          ["tank/fresh", {}, { "tank/fresh@newsnap" => { "creation" => fresh_time } }]
+          ZfsMgmt::Zfs.new(name: "tank/stale", snapshots: { "tank/stale@oldsnap" => { "creation" => stale_time } }),
+          ZfsMgmt::Zfs.new(name: "tank/fresh", snapshots: { "tank/fresh@newsnap" => { "creation" => fresh_time } })
         ])
       end
 
@@ -1143,14 +1174,13 @@ RSpec.describe ZfsMgmt do
     describe "#holds" do
       before do
         allow(ZfsMgmt).to receive(:zfs_managed_list).and_return([
-          [
-            "tank/fs",
-            {},
-            {
+          ZfsMgmt::Zfs.new(
+            name: "tank/fs",
+            snapshots: {
               "tank/fs@s1" => { "creation" => 1000, "userrefs" => 0 },
               "tank/fs@s2" => { "creation" => 2000, "userrefs" => 2 }
             }
-          ]
+          )
         ])
         allow(ZfsMgmt).to receive(:zfs_holds).with("tank/fs@s2").and_return(["holdA", "holdB"])
       end
