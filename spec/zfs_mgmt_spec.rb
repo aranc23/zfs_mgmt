@@ -408,7 +408,6 @@ RSpec.describe ZfsMgmt do
         noop: true,
         drop_holds: true,
         unmount: true,
-        discard_last: true,
         discard_first: true,
         force: true,
         verbose: "recv",
@@ -422,7 +421,7 @@ RSpec.describe ZfsMgmt do
       expect(com).to eq([
         "ssh",
         "backup@remotehost",
-        "'mbuffer -q -m 512M | zfs recv -s -n -h -u -e -d -F -v -x mountpoint -x sharenfs -o readonly=on -o canmount=noauto \"backup/pool/fs\"'"
+        "'mbuffer -q -m 512M | zfs recv -s -n -h -u -d -F -v -x mountpoint -x sharenfs -o readonly=on -o canmount=noauto \"backup/pool/fs\"'"
       ])
     end
 
@@ -1000,6 +999,65 @@ RSpec.describe ZfsMgmt do
       })
 
       ZfsMgmt.zfs_send({}, zfs, props, snaps)
+    end
+
+    it "uses base destination for zfs recv -d and strips first path element for zfsget checks when discard_first is enabled" do
+      props = {
+        "zfsmgmt:destination" => "backup/dest",
+        "zfsmgmt:destination@source" => "inherited from tank",
+        "zfsmgmt:recv_discard_first" => "true"
+      }
+      check_dest = "backup/dest/sub/fs"
+      recv_target = "backup/dest"
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: check_dest, command_prefix: [])
+        .and_raise(ZfsMgmt::ZfsDatasetNotFoundError.new("dataset does not exist: #{check_dest}"))
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", '"tank/sub/fs@snap1"', "|",
+        "zfs", "recv", "-s", "-d", "\"#{recv_target}\""
+      ]).ordered.and_return(status_ok)
+
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: check_dest,
+        types: ["snapshot"],
+        command_prefix: [],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{check_dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "zfs", "recv", "-s", "-d", "\"#{recv_target}\""
+      ]).ordered.and_return(status_ok)
+
+      ZfsMgmt.zfs_send({}, zfs, props, snaps)
+    end
+
+    it "allows CLI discard_first: false to override zfsmgmt:recv_discard_first=true" do
+      props = {
+        "zfsmgmt:destination" => "backup/dest",
+        "zfsmgmt:destination@source" => "inherited from tank",
+        "zfsmgmt:recv_discard_first" => "true"
+      }
+      dest = "backup/dest/tank/sub/fs"
+      opts = Thor::CoreExt::HashWithIndifferentAccess.new(discard_first: false)
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: []).and_return({
+        dest => {}
+      })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: dest,
+        types: ["snapshot"],
+        command_prefix: [],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{dest}@snap2" => { "creation" => 2000, "userrefs" => 0 }
+      })
+
+      ZfsMgmt.zfs_send(opts, zfs, props, snaps)
     end
   end
 

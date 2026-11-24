@@ -39,7 +39,6 @@ RSpec.describe ZfsMgmt::Zfs do
         "recv_noop",
         "recv_drop_holds",
         "recv_unmount",
-        "recv_discard_last",
         "recv_discard_first",
         "recv_force",
         "restic_backup",
@@ -217,6 +216,10 @@ RSpec.describe ZfsMgmt::Zfs do
         expect(zfs.destination).to eq("backup/dest/tank/sub/fs")
         expect(zfs.resolved_destination).to eq("backup/dest/tank/sub/fs")
         expect(zfs.resolved_destination("other/dest")).to eq("other/dest/tank/sub/fs")
+        expect(zfs.base_destination).to eq("backup/dest")
+        expect(zfs.base_destination("other/dest")).to eq("other/dest")
+        expect(zfs.discard_first_destination).to eq("backup/dest/sub/fs")
+        expect(zfs.discard_first_destination("other/dest")).to eq("other/dest/sub/fs")
       end
 
       it "leaves destination nil when source is received or unrecognized" do
@@ -225,6 +228,8 @@ RSpec.describe ZfsMgmt::Zfs do
           "zfsmgmt:destination@source" => "received"
         })
         expect(zfs.destination).to be_nil
+        expect(zfs.base_destination).to be_nil
+        expect(zfs.discard_first_destination).to be_nil
       end
     end
 
