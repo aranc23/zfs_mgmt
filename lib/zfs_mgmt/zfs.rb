@@ -31,6 +31,8 @@ module ZfsMgmt
 
       property :name, String,
                description: 'Full name of the ZFS dataset (e.g. tank/data)'
+      property :type, String, optional: true, enum: %w[filesystem volume],
+               description: 'ZFS dataset type (filesystem or volume)'
 
       # Snapshot retention policy properties
       property :manage, T::Boolean, optional: true, default: false,
@@ -125,6 +127,10 @@ module ZfsMgmt
       send_enabled == true
     end
 
+    def volume?
+      type == 'volume'
+    end
+
     def snapshots
       return @snapshots unless @snapshots.nil?
 
@@ -158,6 +164,7 @@ module ZfsMgmt
     def self.from_zfs_props(name, props = {})
       props ||= {}
       attrs = { name: name }
+      attrs[:type] = props['type'] if props.key?('type')
 
       attrs[:manage] = ZfsMgmt.prop_on?(props['zfsmgmt:manage'])
       attrs[:policy] = props['zfsmgmt:policy'] if props.key?('zfsmgmt:policy')
