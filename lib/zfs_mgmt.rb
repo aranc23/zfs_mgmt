@@ -421,7 +421,13 @@ module ZfsMgmt
     end
     zfs_name = zfs_obj.name
     sorted = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }
-    destination_path = zfs_obj.resolved_destination(options[:destination])
+    discard_first = recv_discard_first?(options, zfs_obj)
+    destination_path = if discard_first
+                         zfs_obj.discard_first_destination(options[:destination])
+                       else
+                         zfs_obj.resolved_destination(options[:destination])
+                       end
+    recv_target = discard_first ? zfs_obj.base_destination(options[:destination]) : destination_path
     unless destination_path
       $logger.error("fatal error: unable to determine destination path for #{zfs_name}")
       exit(1)
@@ -464,7 +470,7 @@ module ZfsMgmt
       e = zfs_send_estimate(com) if options[:verbose] == 'pv'
       com += mbuffer_command(options) if options[:mbuffer]
       com += pv_command(options,e) if options[:verbose] == 'pv'
-      com += zfs_recv_com(options,[],zfs_obj,destination_path)
+      com += zfs_recv_com(options,[],zfs_obj,recv_target)
  
       status = system_com(com)
       record_send_state(zfs_name, status) unless options[:noop]
@@ -482,7 +488,7 @@ module ZfsMgmt
       com += mbuffer_command(options) if options[:mbuffer]
       com += pv_command(options,e) if options[:verbose] == 'pv'
 
-      com += zfs_recv_com(options,[],zfs_obj,destination_path)
+      com += zfs_recv_com(options,[],zfs_obj,recv_target)
 
       status = system_com(com)
       record_send_state(zfs_name, status) unless options[:noop]
@@ -527,7 +533,7 @@ module ZfsMgmt
         e = zfs_send_estimate(com) if options[:verbose] == 'pv'
         com += mbuffer_command(options) if options[:mbuffer]
         com += pv_command(options,e) if options[:verbose] == 'pv'
-        com += zfs_recv_com(options,[],zfs_obj,destination_path)
+        com += zfs_recv_com(options,[],zfs_obj,recv_target)
 
         status = system_com(com)
         record_send_state(zfs_name, status) unless options[:noop]
@@ -580,6 +586,13 @@ module ZfsMgmt
     return false if key_comp?(props, 'zfsmgmt:recv_state', method(:prop_off?))
     true
   end
+  def self.recv_discard_first?(options, zfs_obj)
+    if key_comp?(options, 'discard_first', [true, false])
+      key_comp?(options, 'discard_first', true)
+    else
+      zfs_obj.recv_discard_first
+    end
+  end
   def self.zfs_recv_com(options,extra_opts,props,target)
     zfs_obj = props.is_a?(ZfsMgmt::Zfs) ? props : ZfsMgmt::Zfs.from_zfs_props('', props)
     zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv' ]
@@ -588,7 +601,6 @@ module ZfsMgmt
       'noop'          => '-n',
       'drop_holds'    => '-h',
       'unmount'       => '-u',
-      'discard_last'  => '-e',
       'discard_first' => '-d',
       'force'         => '-F'
     }

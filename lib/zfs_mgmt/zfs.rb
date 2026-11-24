@@ -20,7 +20,6 @@ module ZfsMgmt
       recv_noop
       recv_drop_holds
       recv_unmount
-      recv_discard_last
       recv_discard_first
       recv_force
     ].freeze
@@ -93,8 +92,6 @@ module ZfsMgmt
                description: 'Pass -h (drop holds) to zfs recv'
       property :recv_unmount, T::Boolean, optional: true, default: false,
                description: 'Pass -u (unmount) to zfs recv'
-      property :recv_discard_last, T::Boolean, optional: true, default: false,
-               description: 'Pass -e (discard all but last path element) to zfs recv'
       property :recv_discard_first, T::Boolean, optional: true, default: false,
                description: 'Pass -d (discard first path element) to zfs recv'
       property :recv_force, T::Boolean, optional: true, default: false,
@@ -111,6 +108,7 @@ module ZfsMgmt
       attrs = attributes.transform_keys(&:to_sym)
       @snapshots = attrs.delete(:snapshots) if attrs.key?(:snapshots)
       @destination_relative_path = attrs.delete(:destination_relative_path) if attrs.key?(:destination_relative_path)
+      @destination_base = attrs.delete(:destination_base) if attrs.key?(:destination_base)
       if attrs.key?(:send) && !attrs.key?(:send_enabled)
         attrs[:send_enabled] = attrs.delete(:send)
       end
@@ -153,6 +151,20 @@ module ZfsMgmt
 
       rel = @destination_relative_path || File.basename(name)
       File.join(override, rel)
+    end
+
+    def base_destination(override = nil)
+      return override if override
+
+      @destination_base || destination
+    end
+
+    def discard_first_destination(override = nil)
+      base = base_destination(override)
+      return nil unless base
+
+      rel = name.include?('/') ? name.split('/', 2).last : nil
+      rel && !rel.empty? ? File.join(base, rel) : base
     end
 
     def self.from_zfs_props(name, props = {})
@@ -214,10 +226,12 @@ module ZfsMgmt
           rel = File.basename(name)
           attrs[:destination] = File.join(dest_base, rel)
           attrs[:destination_relative_path] = rel
+          attrs[:destination_base] = dest_base
         elsif dest_src && (m = /\Ainherited from (.+)\z/.match(dest_src))
           rel = File.join(File.basename(m[1]), name.sub(m[1], ''))
           attrs[:destination] = File.join(dest_base, rel)
           attrs[:destination_relative_path] = rel
+          attrs[:destination_base] = dest_base
         end
       end
 
