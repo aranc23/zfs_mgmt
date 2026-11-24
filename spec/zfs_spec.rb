@@ -61,6 +61,7 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(zfs.snap_timestamp).to eq("%FT%T%z")
       expect(zfs.send_enabled).to eq(false)
       expect(zfs.send?).to eq(false)
+      expect(zfs.volume?).to eq(false)
       expect(zfs.recv_state).to eq(true)
       expect(zfs.restic_backup).to eq(false)
     end
@@ -223,6 +224,16 @@ RSpec.describe ZfsMgmt::Zfs do
         })
         expect(zfs.destination).to be_nil
       end
+    end
+
+    it "maps type and volume? from ZFS properties" do
+      vol = described_class.from_zfs_props("tank/zvol", { "type" => "volume" })
+      expect(vol.type).to eq("volume")
+      expect(vol.volume?).to eq(true)
+
+      fs = described_class.from_zfs_props("tank/fs", { "type" => "filesystem" })
+      expect(fs.type).to eq("filesystem")
+      expect(fs.volume?).to eq(false)
     end
 
     it "maps all send, recv, snapshot policy, and restic properties" do
