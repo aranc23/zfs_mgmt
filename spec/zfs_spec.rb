@@ -74,11 +74,13 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(zfs).to be_valid
     end
 
-    it "rejects invalid strategy, policy, and minage values" do
+    it "rejects invalid strategy, policy, minage, and type values" do
       expect(described_class.new(name: "tank/data", strategy: "newest")).not_to be_valid
       expect(described_class.new(name: "tank/data", policy: "bogus")).not_to be_valid
       expect(described_class.new(name: "tank/data", minage: "invalid")).not_to be_valid
-      expect(described_class.new(name: "tank/data", policy: "10y60m104w365d168h", minage: "7D", strategy: "youngest")).to be_valid
+      expect(described_class.new(name: "tank/data", type: "snapshot")).not_to be_valid
+      expect(described_class.new(name: "tank/data", policy: "10y60m104w365d168h", minage: "7D", strategy: "youngest", type: "filesystem")).to be_valid
+      expect(described_class.new(name: "tank/zvol", type: "volume")).to be_valid
     end
   end
 

@@ -31,8 +31,8 @@ module ZfsMgmt
 
       property :name, String,
                description: 'Full name of the ZFS dataset (e.g. tank/data)'
-      property :type, String, optional: true,
-               description: 'ZFS dataset type (e.g. filesystem or volume)'
+      property :type, String, optional: true, enum: %w[filesystem volume],
+               description: 'ZFS dataset type (filesystem or volume)'
 
       # Snapshot retention policy properties
       property :manage, T::Boolean, optional: true, default: false,
