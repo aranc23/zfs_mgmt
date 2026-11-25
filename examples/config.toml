@@ -42,6 +42,9 @@ readonly = "on"
 
 # ---------------------------------------------------------------------------
 # Per-dataset options (mirroring zfsmgmt:* user properties)
+# Each dataset is configured as a standard TOML table: [zfs."pool/dataset"]
+# (not an array-of-tables [[zfs."pool/dataset"]]). Dataset names containing
+# '/' (or other non-bare-key characters) must be quoted.
 # ---------------------------------------------------------------------------
 
 # Parent dataset: snapshot retention & creation defaults inherited by children

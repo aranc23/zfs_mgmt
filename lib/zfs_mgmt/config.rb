@@ -201,7 +201,6 @@ module ZfsMgmt
           raise ConfigError, "invalid config file #{path}: expected top-level table"
         end
 
-        normalize_parsed_zfs_tables!(parsed)
         DeepMerge.deep_merge!(parsed, merged, overwrite_arrays: true)
       end
 
@@ -232,14 +231,11 @@ module ZfsMgmt
         if entry.is_a?(ZfsMgmt::Zfs)
           @raw_zfs[ds_name] = extract_raw_from_model(entry)
           models[ds_name] = entry
+        elsif entry.is_a?(Hash)
+          @raw_zfs[ds_name] = filter_zfs_entry_keys(ds_name, entry)
+          deferred_raw << ds_name
         else
-          collapsed = collapse_entry_hashes(entry)
-          if collapsed.is_a?(Hash)
-            @raw_zfs[ds_name] = filter_zfs_entry_keys(ds_name, collapsed)
-            deferred_raw << ds_name
-          else
-            models[ds_name] = collapsed
-          end
+          models[ds_name] = entry
         end
       end
 
@@ -248,15 +244,6 @@ module ZfsMgmt
       end
 
       models
-    end
-
-    def collapse_entry_hashes(entry)
-      return entry unless entry.is_a?(Array) && entry.all? { |item| item.is_a?(Hash) }
-
-      entry.each_with_object({}) do |item, acc|
-        str_item = item.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
-        DeepMerge.deep_merge!(str_item, acc, overwrite_arrays: true)
-      end
     end
 
     def filter_zfs_entry_keys(ds_name, hash)
@@ -283,21 +270,6 @@ module ZfsMgmt
       raw
     end
 
-    def self.normalize_parsed_zfs_tables!(parsed)
-      return unless parsed['zfs'].is_a?(Hash)
-
-      parsed['zfs'].each do |ds_name, entry|
-        next unless entry.is_a?(Array) && entry.all? { |item| item.is_a?(Hash) }
-
-        merged_entry = {}
-        entry.each do |item|
-          DeepMerge.deep_merge!(item, merged_entry, overwrite_arrays: true)
-        end
-        parsed['zfs'][ds_name] = merged_entry
-      end
-    end
-    private_class_method :normalize_parsed_zfs_tables!
-
     def validate_overrides
       unless overrides.is_a?(Hash)
         errors.add(:overrides, 'must be a hash of property=value pairs')
@@ -319,7 +291,11 @@ module ZfsMgmt
 
       zfs.each do |dataset_name, zfs_obj|
         unless zfs_obj.is_a?(ZfsMgmt::Zfs)
-          errors.add(:zfs, "#{dataset_name}: must be a Zfs configuration table")
+          if zfs_obj.is_a?(Array)
+            errors.add(:zfs, "#{dataset_name}: must be a Zfs configuration table (use [zfs.\"#{dataset_name}\"], not [[zfs.\"#{dataset_name}\"]])")
+          else
+            errors.add(:zfs, "#{dataset_name}: must be a Zfs configuration table")
+          end
           next
         end
         unless zfs_obj.valid?
