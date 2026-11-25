@@ -219,6 +219,90 @@ create snapshots called autosnap-%FT%T%z.
 strftime format string used when creating snapshot names, default
 being %FT%T%z.
 
+### zfsmgmt:send
+Enable `zfs send` for this dataset. Accepts boolean values (`true`/`on`)
+or `'local'`:
+- `true` or `on`: enables `zfs send` when the property's ZFS source is
+  `local` or `inherited`, and disables it when the source is `received`
+  or when `zfsmgmt:send_replicate` is inherited from an ancestor.
+- `local`: enables `zfs send` only when the property's ZFS source is
+  `local` (not inherited or received).
+
+### zfsmgmt:remote
+Remote SSH target for `zfs recv` and remote `zfs get` checks (e.g.
+`user@host`). When omitted, `zfs recv` runs locally.
+
+### zfsmgmt:destination
+Base destination ZFS dataset path for `zfs send`/`recv` (required for
+`zfsmgr send all`, even if `--destination` is passed on the command
+line):
+- When the property's ZFS source is `local`, the destination path
+  resolves to `<destination>/<dataset basename>`.
+- When the property's ZFS source is `inherited from <ancestor>`, the
+  destination path resolves to
+  `<destination>/<ancestor basename>/<relative path>`.
+- When the source is `received` (or unrecognized), no destination is
+  resolved.
+
+### zfsmgmt:send_intermediary (default: false)
+Boolean (`true`/`on`). Pass `-I` (include intermediary snapshots) to
+`zfs send`.
+
+### zfsmgmt:send_backup (default: false)
+Boolean (`true`/`on`). Pass `-b` (send received property values) to
+`zfs send`.
+
+### zfsmgmt:send_compressed (default: false)
+Boolean (`true`/`on`). Pass `-c` (send compressed blocks) to `zfs send`.
+
+### zfsmgmt:send_embed (default: false)
+Boolean (`true`/`on`). Pass `-e` (send embedded data) to `zfs send`.
+
+### zfsmgmt:send_holds (default: false)
+Boolean (`true`/`on`). Pass `-h` (send snapshot holds) to `zfs send`.
+
+### zfsmgmt:send_large_block (default: false)
+Boolean (`true`/`on`). Pass `-L` (allow large blocks) to `zfs send`.
+
+### zfsmgmt:send_props (default: false)
+Boolean (`true`/`on`). Pass `-p` (send properties) to `zfs send`.
+
+### zfsmgmt:send_raw (default: false)
+Boolean (`true`/`on`). Pass `-w` (send raw encrypted stream) to
+`zfs send`.
+
+### zfsmgmt:send_replicate (default: false)
+Boolean (`true`/`on`). Pass `-R` (replication stream) to `zfs send` and
+use the newest snapshot for initial send. Only takes effect on the
+dataset where `zfsmgmt:send_replicate` is `local`; descendant datasets
+inheriting it have both `send` and `send_replicate` disabled so they are
+not sent separately.
+
+### zfsmgmt:recv_state (default: true)
+Boolean. Pass `-s` (save partial receive state for resuming) to
+`zfs recv`. Enabled by default unless set to `false` or `off` (or
+overridden on the CLI).
+
+### zfsmgmt:recv_noop (default: false)
+Boolean (`true`/`on`). Pass `-n` (dry-run / do not actually receive) to
+`zfs recv`.
+
+### zfsmgmt:recv_drop_holds (default: false)
+Boolean (`true`/`on`). Pass `-h` (skip receiving holds) to `zfs recv`.
+
+### zfsmgmt:recv_unmount (default: false)
+Boolean (`true`/`on`). Pass `-u` (do not mount received filesystem) to
+`zfs recv`.
+
+### zfsmgmt:recv_discard_first (default: false)
+Boolean (`true`/`on`). Pass `-d` (discard the first element of the sent
+snapshot's filesystem name) to `zfs recv`, passing the base
+`zfsmgmt:destination` (or `--destination`) as the `zfs recv` target and
+stripping the first path element for remote existence/snapshot checks.
+
+### zfsmgmt:recv_force (default: false)
+Boolean (`true`/`on`). Pass `-F` (force rollback) to `zfs recv`.
+
 ### zfsmgmt:restic_backup
 boolean, send this zfs to restic
 
