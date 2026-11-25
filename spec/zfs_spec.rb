@@ -286,6 +286,35 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(zfs.restic_backup).to eq(true)
       expect(zfs.restic_repository).to eq("/srv/restic")
     end
+
+    it "warns when an unknown zfsmgmt:* property is set" do
+      expect($logger).to receive(:warn).with("unknown zfsmgmt property 'zfsmgmt:snaphsot' on tank/app")
+      expect($logger).to receive(:warn).with("unknown zfsmgmt property 'zfsmgmt:bogus' on tank/app")
+
+      described_class.from_zfs_props("tank/app", {
+        "type" => "filesystem",
+        "mountpoint" => "/app",
+        "zfsmgmt:manage" => "true",
+        "zfsmgmt:manage@source" => "local",
+        "zfsmgmt:snaphsot" => "true",
+        "zfsmgmt:snaphsot@source" => "local",
+        "zfsmgmt:bogus" => "123"
+      })
+    end
+
+    it "does not warn for any valid zfsmgmt:* properties or @source metadata" do
+      expect($logger).not_to receive(:warn)
+
+      props = described_class::VALID_ZFS_PROPS.each_with_object({}) do |prop, h|
+        h[prop] = "true"
+        h["#{prop}@source"] = "local"
+      end
+      props["zfsmgmt:strategy"] = "oldest"
+      props["zfsmgmt:policy"] = "7d"
+      props["zfsmgmt:minage"] = "1h"
+
+      described_class.from_zfs_props("tank/app", props)
+    end
   end
 
   describe "lazy snapshot retrieval" do

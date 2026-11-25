@@ -24,6 +24,18 @@ module ZfsMgmt
       recv_force
     ].freeze
 
+    VALID_ZFS_PROPS = (
+      %w[
+        manage policy strategy minage matchsnaps ignoresnaps prefersnaps
+        snapshot snap_prefix snap_timestamp
+        send remote destination send_replicate
+        recv_state
+        restic_backup restic_repository
+      ] +
+      SEND_BOOL_PROPS.map(&:to_s) +
+      RECV_BOOL_PROPS.map(&:to_s)
+    ).map { |p| "zfsmgmt:#{p}" }.freeze
+
     define_schema do
       title 'Zfs'
       description 'Encapsulates zfsmgmt:* user properties for a ZFS dataset'
@@ -173,8 +185,21 @@ module ZfsMgmt
       rel && !rel.empty? ? File.join(base, rel) : base
     end
 
+    def self.warn_unknown_zfs_props(name, props)
+      props.each_key do |key|
+        key_str = key.to_s
+        next unless key_str.start_with?('zfsmgmt:')
+        next if key_str.end_with?('@source')
+        next if VALID_ZFS_PROPS.include?(key_str)
+
+        target = name.nil? || name.empty? ? '' : " on #{name}"
+        $logger&.warn("unknown zfsmgmt property '#{key_str}'#{target}")
+      end
+    end
+
     def self.from_zfs_props(name, props = {})
       props ||= {}
+      warn_unknown_zfs_props(name, props)
       attrs = { name: name }
       attrs[:type] = props['type'] if props.key?('type')
 
