@@ -2,6 +2,7 @@
 require 'easy_talk'
 require 'tomlrb'
 require 'deep_merge/core'
+require 'json'
 require 'zfs_mgmt/zfs'
 
 module ZfsMgmt
@@ -36,6 +37,8 @@ module ZfsMgmt
     include EasyTalk::Model
 
     TOP_LEVEL_KEYS = %w[excludes overrides zfs].freeze
+    JSON_SCHEMA_DRAFT = 'http://json-schema.org/draft-07/schema#'
+    JSON_SCHEMA_URL = 'https://raw.githubusercontent.com/aranc23/zfs_mgmt/master/schema/config.schema.json'
 
     define_schema do
       title 'Config'
@@ -142,6 +145,44 @@ module ZfsMgmt
 
     def self.from_hash(hash)
       new(hash || {})
+    end
+
+    def self.config_json_schema
+      base = JSON.parse(JSON.generate(json_schema))
+      schema = {
+        '$schema' => JSON_SCHEMA_DRAFT,
+        '$id' => JSON_SCHEMA_URL
+      }.merge(base)
+
+      zfs_schema = schema.dig('properties', 'zfs', 'additionalProperties')
+      if zfs_schema.is_a?(Hash)
+        if zfs_schema['required'].is_a?(Array)
+          zfs_schema['required'].delete('name')
+          zfs_schema.delete('required') if zfs_schema['required'].empty?
+        end
+
+        zfs_props = zfs_schema['properties']
+        if zfs_props.is_a?(Hash)
+          zfs_props['snapshot'] = {
+            'description' => 'Whether snapshots should be created for this dataset (true, false, "recursive", or "local")',
+            'oneOf' => [
+              { 'type' => 'boolean' },
+              { 'type' => 'string', 'enum' => %w[recursive local] }
+            ],
+            'default' => false
+          }
+          zfs_props['send'] = {
+            'description' => 'Whether zfs send is enabled for this dataset (true, false, or "local")',
+            'oneOf' => [
+              { 'type' => 'boolean' },
+              { 'type' => 'string', 'enum' => %w[local] }
+            ],
+            'default' => false
+          }
+        end
+      end
+
+      schema
     end
 
     def self.load_files(paths)
