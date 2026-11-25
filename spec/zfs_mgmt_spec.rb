@@ -749,16 +749,14 @@ RSpec.describe ZfsMgmt do
 
     it "merges config properties over ZFS user properties and propagates config inheritance" do
       ZfsMgmt.config = ZfsMgmt::Config.from_hash(
-        "zfs" => {
-          "tank" => {
-            "manage" => true,
-            "policy" => "30d",
-            "destination" => "configpool"
-          },
-          "tank/child" => {
-            "send" => true,
-            "remote" => "root@config-remote"
-          }
+        "tank" => {
+          "manage" => true,
+          "policy" => "30d",
+          "destination" => "configpool"
+        },
+        "tank/child" => {
+          "send" => true,
+          "remote" => "root@config-remote"
         }
       )
 
@@ -1168,13 +1166,11 @@ RSpec.describe ZfsMgmt do
       ZfsMgmt.config = ZfsMgmt::Config.from_hash(
         "excludes" => ["mountpoint"],
         "overrides" => { "readonly" => "on" },
-        "zfs" => {
-          "tank/sub/fs" => {
-            "destination" => "config/dest",
-            "remote" => "config@host",
-            "send_intermediary" => true,
-            "recv_unmount" => true
-          }
+        "tank/sub/fs" => {
+          "destination" => "config/dest",
+          "remote" => "config@host",
+          "send_intermediary" => true,
+          "recv_unmount" => true
         }
       )
 

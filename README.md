@@ -130,6 +130,46 @@ the `.gem` file to [rubygems.org](https://rubygems.org).
 Bug reports and pull requests are welcome on GitHub at
 https://github.com/aranc23/zfs_mgmt.
 
+## Configuration File
+
+`zfsmgr` loads `*.toml` configuration files from the following directory (unless `--config-dir <path>` is specified):
+
+- `/etc/zfsmgr/*.toml` when running as `root`
+- `$XDG_CONFIG_HOME/zfsmgr/*.toml` when non-root and `XDG_CONFIG_HOME` is set
+- `~/.config/zfsmgr/*.toml` when non-root and `XDG_CONFIG_HOME` is unset
+
+Files are loaded in lexicographical `sort()` order (for example `00-base.toml` followed by `50-local.toml`) and deep-merged, with later files replacing earlier scalars, arrays, and per-dataset options.
+
+Precedence is: **CLI options > config file values > ZFS dataset user properties (`zfsmgmt:*`)**.
+
+### Format
+
+At the top level, `excludes` and `[overrides]` set default `zfs recv` `-x` and `-o` options. Each dataset is configured directly as its own top-level section (`["zpool/zfs"]` or `[["zpool/zfs"]]`). Dataset names containing `/` (or other characters not allowed in TOML bare keys) must be quoted:
+
+```toml
+#:schema https://raw.githubusercontent.com/aranc23/zfs_mgmt/master/schema/config.schema.json
+
+excludes = ["mountpoint", "sharenfs"]
+
+[overrides]
+canmount = "noauto"
+readonly = "on"
+
+["tank"]
+manage = true
+policy = "10y6m4w30d24h"
+snapshot = true
+
+["tank/data"]
+send = true
+remote = "zfs_recv@backup.example.com"
+destination = "backup/tank"
+```
+
+Dataset options configured in TOML inherit to child datasets (e.g. `tank` -> `tank/data`) with the same source semantics as `zfsmgmt:*` user properties.
+
+See [examples/config.toml](examples/config.toml) for a full example and [schema/config.schema.json](schema/config.schema.json) for the JSON Schema (used by TOML editors/validators via the `#:schema` directive; regenerate with `bundle exec rake schema`).
+
 ## zfs user properties
 
 Destruction of zfs snapshots is based on the following zfs user

@@ -3,21 +3,23 @@ require "tmpdir"
 
 RSpec.describe ZfsMgmt::Config do
   describe "EasyTalk schema and validations" do
-    it "includes EasyTalk::Model and generates a JSON schema with excludes, overrides, and zfs" do
+    it "includes EasyTalk::Model and generates a JSON schema with excludes, overrides, and additionalProperties for datasets" do
       expect(described_class.ancestors).to include(EasyTalk::Model)
 
       schema = described_class.json_schema
       expect(schema["type"]).to eq("object")
 
       props = schema["properties"]
-      expect(props.keys).to include("excludes", "overrides", "zfs")
+      expect(props.keys).to include("excludes", "overrides")
+      expect(props.keys).not_to include("zfs")
       expect(props["excludes"]["type"]).to eq("array")
       expect(props["excludes"]["items"]).to eq({ "type" => "string" })
       expect(props["overrides"]["type"]).to eq("object")
       expect(props["overrides"]["additionalProperties"]).to eq({ "type" => "string" })
-      expect(props["zfs"]["type"]).to eq("object")
-      expect(props["zfs"]["additionalProperties"]["type"]).to eq("object")
-      expect(props["zfs"]["additionalProperties"]["properties"].keys).to include("send", "destination", "remote")
+
+      zfs_schema = schema["additionalProperties"]
+      expect(zfs_schema["type"]).to eq("object")
+      expect(zfs_schema["properties"].keys).to include("send", "destination", "remote")
     end
 
     it "applies sensible defaults and validates valid configs" do
@@ -41,11 +43,9 @@ RSpec.describe ZfsMgmt::Config do
 
     it "rejects invalid nested Zfs properties" do
       cfg = described_class.from_hash(
-        "zfs" => {
-          "tank/data" => {
-            "policy" => "bogus",
-            "strategy" => "invalid"
-          }
+        "tank/data" => {
+          "policy" => "bogus",
+          "strategy" => "invalid"
         }
       )
       expect(cfg).not_to be_valid
@@ -75,12 +75,12 @@ RSpec.describe ZfsMgmt::Config do
           readonly = "on"
           canmount = "off"
 
-          [zfs."pool/zfs"]
+          ["pool/zfs"]
           manage = true
           policy = "30d"
           remote = "root@oldhost"
 
-          [zfs."pool/zfs/zfs2"]
+          ["pool/zfs/zfs2"]
           send = true
           destination = "otherpool"
           remote = "root@host"
@@ -93,10 +93,10 @@ RSpec.describe ZfsMgmt::Config do
           canmount = "noauto"
           atime = "off"
 
-          [zfs."pool/zfs"]
+          ["pool/zfs"]
           remote = "root@newhost"
 
-          [zfs."pool/zfs/zfs2"]
+          ["pool/zfs/zfs2"]
           send_compressed = true
         TOML
 
@@ -125,19 +125,32 @@ RSpec.describe ZfsMgmt::Config do
       end
     end
 
-    it "supports [[zfs.\"dataset\"]] array-of-tables syntax in TOML" do
+    it "supports [[dataset]] array-of-tables syntax, bare pool tables, and cross-file merging" do
       Dir.mktmpdir do |dir|
-        File.write(File.join(dir, "10-send.toml"), <<~TOML)
-          [[zfs."pool/zfs/zfs2"]]
+        File.write(File.join(dir, "00-base.toml"), <<~TOML)
+          [tank]
+          manage = true
+          policy = "30d"
+
+          [["pool/zfs/zfs2"]]
           send = true
           destination = "otherpool"
+          remote = "root@oldhost"
+        TOML
+
+        File.write(File.join(dir, "50-local.toml"), <<~TOML)
+          ["pool/zfs/zfs2"]
           remote = "root@host"
+          send_compressed = true
         TOML
 
         cfg = described_class.load_dir(dir)
+        expect(cfg.zfs["tank"].manage).to eq(true)
+        expect(cfg.zfs["tank"].policy).to eq("30d")
         expect(cfg.zfs["pool/zfs/zfs2"].send_enabled).to eq(true)
         expect(cfg.zfs["pool/zfs/zfs2"].destination).to eq("otherpool/zfs2")
         expect(cfg.zfs["pool/zfs/zfs2"].remote).to eq("root@host")
+        expect(cfg.zfs["pool/zfs/zfs2"].send_compressed).to eq(true)
       end
     end
 
@@ -154,7 +167,7 @@ RSpec.describe ZfsMgmt::Config do
     it "raises ConfigError and logs an error when merged config fails validation" do
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, "00-invalid.toml"), <<~TOML)
-          [zfs."pool/bad"]
+          ["pool/bad"]
           policy = "not-a-policy"
         TOML
 
@@ -163,17 +176,21 @@ RSpec.describe ZfsMgmt::Config do
       end
     end
 
-    it "warns on unknown top-level and per-dataset config keys" do
-      expect($logger).to receive(:warn).with("unknown config key 'bogus_top'")
+    it "rejects non-table top-level keys and warns on unknown per-dataset config keys" do
+      bad_cfg = described_class.from_hash(
+        "bogus_top" => true,
+        "empty_arr" => []
+      )
+      expect(bad_cfg).not_to be_valid
+      expect(bad_cfg.errors[:zfs].join).to include("bogus_top")
+      expect(bad_cfg.errors[:zfs].join).to include("empty_arr")
+
       expect($logger).to receive(:warn).with("unknown config property 'snaphsot' on pool/ds")
 
       cfg = described_class.from_hash(
-        "bogus_top" => true,
-        "zfs" => {
-          "pool/ds" => {
-            "manage" => true,
-            "snaphsot" => true
-          }
+        "pool/ds" => {
+          "manage" => true,
+          "snaphsot" => true
         }
       )
       expect(cfg).to be_valid
@@ -184,17 +201,15 @@ RSpec.describe ZfsMgmt::Config do
   describe "#zfs_props_for manual inheritance" do
     it "propagates ancestor properties down to children and grandchildren with @source metadata" do
       cfg = described_class.from_hash(
-        "zfs" => {
-          "pool" => {
-            "manage" => true,
-            "policy" => "30d",
-            "destination" => "backup/dest",
-            "remote" => "root@drhost"
-          },
-          "pool/a" => {
-            "policy" => "7d",
-            "send" => true
-          }
+        "pool" => {
+          "manage" => true,
+          "policy" => "30d",
+          "destination" => "backup/dest",
+          "remote" => "root@drhost"
+        },
+        "pool/a" => {
+          "policy" => "7d",
+          "send" => true
         }
       )
 
@@ -221,16 +236,14 @@ RSpec.describe ZfsMgmt::Config do
 
     it "handles source-sensitive properties (send=local, send_replicate, snapshot=recursive/local) like ZFS" do
       cfg = described_class.from_hash(
-        "zfs" => {
-          "pool/rep" => {
-            "send" => true,
-            "send_replicate" => true,
-            "snapshot" => "recursive"
-          },
-          "pool/only" => {
-            "send" => "local",
-            "snapshot" => "local"
-          }
+        "pool/rep" => {
+          "send" => true,
+          "send_replicate" => true,
+          "snapshot" => "recursive"
+        },
+        "pool/only" => {
+          "send" => "local",
+          "snapshot" => "local"
         }
       )
 
@@ -258,10 +271,8 @@ RSpec.describe ZfsMgmt::Config do
 
     it "only emits explicitly configured properties so unspecified defaults do not clobber ZFS user properties" do
       cfg = described_class.from_hash(
-        "zfs" => {
-          "pool/ds" => {
-            "remote" => "root@config-host"
-          }
+        "pool/ds" => {
+          "remote" => "root@config-host"
         }
       )
 
@@ -297,10 +308,20 @@ RSpec.describe ZfsMgmt::Config do
       schema = described_class.config_json_schema
       expect(schema["$schema"]).to eq("http://json-schema.org/draft-07/schema#")
       expect(schema["$id"]).to eq("https://raw.githubusercontent.com/aranc23/zfs_mgmt/master/schema/config.schema.json")
+      expect(schema["properties"].keys).not_to include("zfs")
 
-      zfs_schema = schema.dig("properties", "zfs", "additionalProperties")
+      zfs_schema = schema.dig("definitions", "Zfs")
       expect(zfs_schema).to be_a(Hash)
       expect(zfs_schema["required"]).to be_nil
+      expect(zfs_schema["additionalProperties"]).to eq(false)
+
+      expect(schema.dig("additionalProperties", "oneOf")).to eq([
+        { "$ref" => "#/definitions/Zfs" },
+        {
+          "type" => "array",
+          "items" => { "$ref" => "#/definitions/Zfs" }
+        }
+      ])
 
       snapshot_schema = zfs_schema.dig("properties", "snapshot")
       expect(snapshot_schema["oneOf"]).to eq([

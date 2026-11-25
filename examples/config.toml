@@ -42,10 +42,12 @@ readonly = "on"
 
 # ---------------------------------------------------------------------------
 # Per-dataset options (mirroring zfsmgmt:* user properties)
+# Each dataset is a top-level TOML section (["pool/dataset"] or [["pool/dataset"]]).
+# Dataset names containing '/' (or other non-bare-key characters) must be quoted.
 # ---------------------------------------------------------------------------
 
 # Parent dataset: snapshot retention & creation defaults inherited by children
-[zfs."tank"]
+["tank"]
 manage = true
 policy = "10y6m4w30d24h"
 strategy = "oldest"             # "oldest" (default) or "youngest"
@@ -58,7 +60,7 @@ snap_prefix = "zfsmgmt"
 snap_timestamp = "%FT%T%z"
 
 # Child dataset: inherits tank's snapshot policy, configures zfs send/recv
-[zfs."tank/data"]
+["tank/data"]
 send = true                     # true, false, or "local" (only send this dataset)
 remote = "zfs_recv@backup.example.com"
 destination = "backup/tank"
@@ -83,7 +85,7 @@ recv_discard_first = false      # -d (uses base destination as target)
 recv_force = false              # -F
 
 # Child dataset with local overrides and restic backup settings
-[zfs."tank/archive"]
+["tank/archive"]
 manage = false
 snapshot = "recursive"
 send = "local"

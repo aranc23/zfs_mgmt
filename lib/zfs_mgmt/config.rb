@@ -36,9 +36,11 @@ module ZfsMgmt
   class Config
     include EasyTalk::Model
 
-    TOP_LEVEL_KEYS = %w[excludes overrides zfs].freeze
+    RESERVED_TOP_LEVEL_KEYS = %w[excludes overrides].freeze
     JSON_SCHEMA_DRAFT = 'http://json-schema.org/draft-07/schema#'
     JSON_SCHEMA_URL = 'https://raw.githubusercontent.com/aranc23/zfs_mgmt/master/schema/config.schema.json'
+
+    attr_reader :zfs
 
     define_schema do
       title 'Config'
@@ -48,8 +50,7 @@ module ZfsMgmt
                description: 'ZFS properties to exclude on zfs recv (-x)'
       property :overrides, T::Hash[String, String], optional: true,
                description: 'ZFS property overrides to set on zfs recv (-o property=value)'
-      property :zfs, T::Hash[String, ZfsMgmt::Zfs], optional: true,
-               description: 'Per-dataset ZFS configuration keyed by dataset name'
+      additional_properties ZfsMgmt::Zfs
     end
 
     validate :validate_overrides
@@ -58,12 +59,6 @@ module ZfsMgmt
     def initialize(attributes = {})
       @raw_zfs = {}
       raw_attrs = (attributes || {}).each_with_object({}) { |(k, v), h| h[k.to_s] = v }
-
-      raw_attrs.each_key do |k|
-        next if TOP_LEVEL_KEYS.include?(k)
-
-        $logger&.warn("unknown config key '#{k}'")
-      end
 
       super_attrs = {}
       super_attrs[:excludes] = raw_attrs.key?('excludes') ? raw_attrs['excludes'] : []
@@ -78,18 +73,11 @@ module ZfsMgmt
         super_attrs[:overrides] = {}
       end
 
-      if raw_attrs.key?('zfs')
-        raw_zfs_input = raw_attrs['zfs']
-        if raw_zfs_input.is_a?(Hash)
-          super_attrs[:zfs] = normalize_zfs_entries(raw_zfs_input)
-        else
-          super_attrs[:zfs] = raw_zfs_input
-        end
-      else
-        super_attrs[:zfs] = {}
-      end
+      raw_zfs_input = raw_attrs.reject { |k, _| RESERVED_TOP_LEVEL_KEYS.include?(k) }
+      @zfs = normalize_zfs_entries(raw_zfs_input)
 
       super(super_attrs)
+      @additional_properties = @zfs.dup
     end
 
     def override_options
@@ -154,7 +142,7 @@ module ZfsMgmt
         '$id' => JSON_SCHEMA_URL
       }.merge(base)
 
-      zfs_schema = schema.dig('properties', 'zfs', 'additionalProperties')
+      zfs_schema = schema.delete('additionalProperties')
       if zfs_schema.is_a?(Hash)
         if zfs_schema['required'].is_a?(Array)
           zfs_schema['required'].delete('name')
@@ -180,6 +168,17 @@ module ZfsMgmt
             'default' => false
           }
         end
+
+        schema['definitions'] = { 'Zfs' => zfs_schema }
+        schema['additionalProperties'] = {
+          'oneOf' => [
+            { '$ref' => '#/definitions/Zfs' },
+            {
+              'type' => 'array',
+              'items' => { '$ref' => '#/definitions/Zfs' }
+            }
+          ]
+        }
       end
 
       schema
@@ -251,7 +250,7 @@ module ZfsMgmt
     end
 
     def collapse_entry_hashes(entry)
-      return entry unless entry.is_a?(Array) && entry.all? { |item| item.is_a?(Hash) }
+      return entry unless entry.is_a?(Array) && !entry.empty? && entry.all? { |item| item.is_a?(Hash) }
 
       entry.each_with_object({}) do |item, acc|
         str_item = item.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
@@ -284,16 +283,15 @@ module ZfsMgmt
     end
 
     def self.normalize_parsed_zfs_tables!(parsed)
-      return unless parsed['zfs'].is_a?(Hash)
-
-      parsed['zfs'].each do |ds_name, entry|
-        next unless entry.is_a?(Array) && entry.all? { |item| item.is_a?(Hash) }
+      parsed.each do |key, entry|
+        next if RESERVED_TOP_LEVEL_KEYS.include?(key)
+        next unless entry.is_a?(Array) && !entry.empty? && entry.all? { |item| item.is_a?(Hash) }
 
         merged_entry = {}
         entry.each do |item|
           DeepMerge.deep_merge!(item, merged_entry, overwrite_arrays: true)
         end
-        parsed['zfs'][ds_name] = merged_entry
+        parsed[key] = merged_entry
       end
     end
     private_class_method :normalize_parsed_zfs_tables!

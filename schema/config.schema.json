@@ -18,205 +18,215 @@
       "additionalProperties": {
         "type": "string"
       }
-    },
-    "zfs": {
-      "type": "object",
-      "description": "Per-dataset ZFS configuration keyed by dataset name",
-      "additionalProperties": {
-        "type": "object",
-        "title": "Zfs",
-        "description": "Encapsulates zfsmgmt:* user properties for a ZFS dataset",
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "Full name of the ZFS dataset (e.g. tank/data)"
-          },
-          "type": {
-            "type": "string",
-            "description": "ZFS dataset type (filesystem or volume)",
-            "enum": [
-              "filesystem",
-              "volume"
-            ]
-          },
-          "manage": {
-            "type": "boolean",
-            "description": "Whether snapshot retention management is enabled for this dataset",
-            "default": false
-          },
-          "policy": {
-            "type": "string",
-            "description": "Snapshot retention policy specification (e.g. 10y60m104w365d168h)",
-            "pattern": "^(\\d+[hdwmyHDWMY])+$"
-          },
-          "strategy": {
-            "type": "string",
-            "description": "Which snapshot to retain within each policy timeframe",
-            "enum": [
-              "oldest",
-              "youngest"
-            ],
-            "default": "oldest"
-          },
-          "minage": {
-            "type": "string",
-            "description": "Minimum age before a snapshot is eligible for destruction (e.g. 7D)",
-            "pattern": "^\\d+[smhdwSMHDW]?$"
-          },
-          "matchsnaps": {
-            "type": "string",
-            "description": "Regular expression that snapshot names must match to satisfy retention policy"
-          },
-          "ignoresnaps": {
-            "type": "string",
-            "description": "Regular expression for snapshot names to ignore during policy evaluation and destruction"
-          },
-          "prefersnaps": {
-            "type": "string",
-            "description": "Regular expression for snapshot names preferred when selecting snapshots to retain"
-          },
-          "snapshot": {
-            "description": "Whether snapshots should be created for this dataset (true, false, \"recursive\", or \"local\")",
-            "oneOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "string",
-                "enum": [
-                  "recursive",
-                  "local"
-                ]
-              }
-            ],
-            "default": false
-          },
-          "snapshot_recursive": {
-            "type": "boolean",
-            "description": "Whether snapshots should be created recursively (-r) for this dataset",
-            "default": false
-          },
-          "snap_prefix": {
-            "type": "string",
-            "description": "Prefix used when naming created snapshots",
-            "default": "zfsmgmt"
-          },
-          "snap_timestamp": {
-            "type": "string",
-            "description": "strftime format string used when naming created snapshots",
-            "default": "%FT%T%z"
-          },
-          "send": {
-            "description": "Whether zfs send is enabled for this dataset (true, false, or \"local\")",
-            "oneOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "string",
-                "enum": [
-                  "local"
-                ]
-              }
-            ],
-            "default": false
-          },
-          "remote": {
-            "type": "string",
-            "description": "Remote SSH target for zfs recv (e.g. user@host)"
-          },
-          "destination": {
-            "type": "string",
-            "description": "Resolved destination ZFS dataset path for zfs send/recv"
-          },
-          "send_intermediary": {
-            "type": "boolean",
-            "description": "Pass -I (intermediary snapshots) to zfs send",
-            "default": false
-          },
-          "send_backup": {
-            "type": "boolean",
-            "description": "Pass -b (backup) to zfs send",
-            "default": false
-          },
-          "send_compressed": {
-            "type": "boolean",
-            "description": "Pass -c (compressed) to zfs send",
-            "default": false
-          },
-          "send_embed": {
-            "type": "boolean",
-            "description": "Pass -e (embed) to zfs send",
-            "default": false
-          },
-          "send_holds": {
-            "type": "boolean",
-            "description": "Pass -h (holds) to zfs send",
-            "default": false
-          },
-          "send_large_block": {
-            "type": "boolean",
-            "description": "Pass -L (large block) to zfs send",
-            "default": false
-          },
-          "send_props": {
-            "type": "boolean",
-            "description": "Pass -p (properties) to zfs send",
-            "default": false
-          },
-          "send_raw": {
-            "type": "boolean",
-            "description": "Pass -w (raw) to zfs send",
-            "default": false
-          },
-          "send_replicate": {
-            "type": "boolean",
-            "description": "Pass -R (replicate) to zfs send",
-            "default": false
-          },
-          "recv_state": {
-            "type": "boolean",
-            "description": "Pass -s (save partial receive state) to zfs recv",
-            "default": true
-          },
-          "recv_noop": {
-            "type": "boolean",
-            "description": "Pass -n (noop) to zfs recv",
-            "default": false
-          },
-          "recv_drop_holds": {
-            "type": "boolean",
-            "description": "Pass -h (drop holds) to zfs recv",
-            "default": false
-          },
-          "recv_unmount": {
-            "type": "boolean",
-            "description": "Pass -u (unmount) to zfs recv",
-            "default": false
-          },
-          "recv_discard_first": {
-            "type": "boolean",
-            "description": "Pass -d (discard first path element) to zfs recv",
-            "default": false
-          },
-          "recv_force": {
-            "type": "boolean",
-            "description": "Pass -F (force rollback) to zfs recv",
-            "default": false
-          },
-          "restic_backup": {
-            "type": "boolean",
-            "description": "Whether restic backup is enabled for this dataset",
-            "default": false
-          },
-          "restic_repository": {
-            "type": "string",
-            "description": "Target restic repository for backups"
-          }
-        },
-        "additionalProperties": false
-      }
     }
   },
-  "additionalProperties": false
+  "definitions": {
+    "Zfs": {
+      "type": "object",
+      "title": "Zfs",
+      "description": "Encapsulates zfsmgmt:* user properties for a ZFS dataset",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Full name of the ZFS dataset (e.g. tank/data)"
+        },
+        "type": {
+          "type": "string",
+          "description": "ZFS dataset type (filesystem or volume)",
+          "enum": [
+            "filesystem",
+            "volume"
+          ]
+        },
+        "manage": {
+          "type": "boolean",
+          "description": "Whether snapshot retention management is enabled for this dataset",
+          "default": false
+        },
+        "policy": {
+          "type": "string",
+          "description": "Snapshot retention policy specification (e.g. 10y60m104w365d168h)",
+          "pattern": "^(\\d+[hdwmyHDWMY])+$"
+        },
+        "strategy": {
+          "type": "string",
+          "description": "Which snapshot to retain within each policy timeframe",
+          "enum": [
+            "oldest",
+            "youngest"
+          ],
+          "default": "oldest"
+        },
+        "minage": {
+          "type": "string",
+          "description": "Minimum age before a snapshot is eligible for destruction (e.g. 7D)",
+          "pattern": "^\\d+[smhdwSMHDW]?$"
+        },
+        "matchsnaps": {
+          "type": "string",
+          "description": "Regular expression that snapshot names must match to satisfy retention policy"
+        },
+        "ignoresnaps": {
+          "type": "string",
+          "description": "Regular expression for snapshot names to ignore during policy evaluation and destruction"
+        },
+        "prefersnaps": {
+          "type": "string",
+          "description": "Regular expression for snapshot names preferred when selecting snapshots to retain"
+        },
+        "snapshot": {
+          "description": "Whether snapshots should be created for this dataset (true, false, \"recursive\", or \"local\")",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "recursive",
+                "local"
+              ]
+            }
+          ],
+          "default": false
+        },
+        "snapshot_recursive": {
+          "type": "boolean",
+          "description": "Whether snapshots should be created recursively (-r) for this dataset",
+          "default": false
+        },
+        "snap_prefix": {
+          "type": "string",
+          "description": "Prefix used when naming created snapshots",
+          "default": "zfsmgmt"
+        },
+        "snap_timestamp": {
+          "type": "string",
+          "description": "strftime format string used when naming created snapshots",
+          "default": "%FT%T%z"
+        },
+        "send": {
+          "description": "Whether zfs send is enabled for this dataset (true, false, or \"local\")",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "local"
+              ]
+            }
+          ],
+          "default": false
+        },
+        "remote": {
+          "type": "string",
+          "description": "Remote SSH target for zfs recv (e.g. user@host)"
+        },
+        "destination": {
+          "type": "string",
+          "description": "Resolved destination ZFS dataset path for zfs send/recv"
+        },
+        "send_intermediary": {
+          "type": "boolean",
+          "description": "Pass -I (intermediary snapshots) to zfs send",
+          "default": false
+        },
+        "send_backup": {
+          "type": "boolean",
+          "description": "Pass -b (backup) to zfs send",
+          "default": false
+        },
+        "send_compressed": {
+          "type": "boolean",
+          "description": "Pass -c (compressed) to zfs send",
+          "default": false
+        },
+        "send_embed": {
+          "type": "boolean",
+          "description": "Pass -e (embed) to zfs send",
+          "default": false
+        },
+        "send_holds": {
+          "type": "boolean",
+          "description": "Pass -h (holds) to zfs send",
+          "default": false
+        },
+        "send_large_block": {
+          "type": "boolean",
+          "description": "Pass -L (large block) to zfs send",
+          "default": false
+        },
+        "send_props": {
+          "type": "boolean",
+          "description": "Pass -p (properties) to zfs send",
+          "default": false
+        },
+        "send_raw": {
+          "type": "boolean",
+          "description": "Pass -w (raw) to zfs send",
+          "default": false
+        },
+        "send_replicate": {
+          "type": "boolean",
+          "description": "Pass -R (replicate) to zfs send",
+          "default": false
+        },
+        "recv_state": {
+          "type": "boolean",
+          "description": "Pass -s (save partial receive state) to zfs recv",
+          "default": true
+        },
+        "recv_noop": {
+          "type": "boolean",
+          "description": "Pass -n (noop) to zfs recv",
+          "default": false
+        },
+        "recv_drop_holds": {
+          "type": "boolean",
+          "description": "Pass -h (drop holds) to zfs recv",
+          "default": false
+        },
+        "recv_unmount": {
+          "type": "boolean",
+          "description": "Pass -u (unmount) to zfs recv",
+          "default": false
+        },
+        "recv_discard_first": {
+          "type": "boolean",
+          "description": "Pass -d (discard first path element) to zfs recv",
+          "default": false
+        },
+        "recv_force": {
+          "type": "boolean",
+          "description": "Pass -F (force rollback) to zfs recv",
+          "default": false
+        },
+        "restic_backup": {
+          "type": "boolean",
+          "description": "Whether restic backup is enabled for this dataset",
+          "default": false
+        },
+        "restic_repository": {
+          "type": "string",
+          "description": "Target restic repository for backups"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": {
+    "oneOf": [
+      {
+        "$ref": "#/definitions/Zfs"
+      },
+      {
+        "type": "array",
+        "items": {
+          "$ref": "#/definitions/Zfs"
+        }
+      }
+    ]
+  }
 }
