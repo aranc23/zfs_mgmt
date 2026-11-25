@@ -291,4 +291,51 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg.zfs["tank/archive"].snapshot_recursive).to eq(true)
     end
   end
+
+  describe ".config_json_schema and schema/config.schema.json" do
+    it "produces a draft-07 schema tailored for TOML config validation" do
+      schema = described_class.config_json_schema
+      expect(schema["$schema"]).to eq("http://json-schema.org/draft-07/schema#")
+      expect(schema["$id"]).to eq("https://raw.githubusercontent.com/aranc23/zfs_mgmt/master/schema/config.schema.json")
+
+      zfs_schema = schema.dig("properties", "zfs", "additionalProperties")
+      expect(zfs_schema).to be_a(Hash)
+      expect(zfs_schema["required"]).to be_nil
+
+      snapshot_schema = zfs_schema.dig("properties", "snapshot")
+      expect(snapshot_schema["oneOf"]).to eq([
+        { "type" => "boolean" },
+        { "type" => "string", "enum" => %w[recursive local] }
+      ])
+
+      send_schema = zfs_schema.dig("properties", "send")
+      expect(send_schema["oneOf"]).to eq([
+        { "type" => "boolean" },
+        { "type" => "string", "enum" => %w[local] }
+      ])
+    end
+
+    it "matches the committed schema/config.schema.json file" do
+      schema_path = File.expand_path("../schema/config.schema.json", __dir__)
+      expect(File).to exist(schema_path)
+
+      parsed = JSON.parse(File.read(schema_path))
+      expect(parsed).to eq(described_class.config_json_schema)
+    end
+
+    it "generates the schema via the rake schema:generate task" do
+      require "rake"
+      rake = Rake::Application.new
+      Rake.application = rake
+      load File.expand_path("../Rakefile", __dir__)
+
+      Dir.mktmpdir do |dir|
+        out = File.join(dir, "config.schema.json")
+        expect { rake["schema:generate"].invoke(out) }.to output(/Wrote JSON schema to #{Regexp.escape(out)}/).to_stdout
+        expect(JSON.parse(File.read(out))).to eq(described_class.config_json_schema)
+      end
+    ensure
+      Rake.application = nil
+    end
+  end
 end

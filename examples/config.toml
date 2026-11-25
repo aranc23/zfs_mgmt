@@ -1,4 +1,10 @@
+#:schema https://raw.githubusercontent.com/aranc23/zfs_mgmt/master/schema/config.schema.json
+#
 # Sample configuration for zfsmgr
+#
+# Editors and validators such as Taplo (VS Code "Even Better TOML", Neovim taplo)
+# use the #:schema directive above to validate against the raw GitHub URL
+# (you can also pin it to a tagged release URL or a local file path).
 #
 # Configuration files are loaded from *.toml in:
 #   - /etc/zfsmgr/*.toml                          (when running as root)
