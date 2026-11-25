@@ -654,7 +654,7 @@ module ZfsMgmt
     cli_exclude = options.key?(:exclude) ? options[:exclude] : options['exclude']
     cli_option  = options.key?(:option)  ? options[:option]  : options['option']
     excludes  = cli_exclude.nil? ? config&.excludes : cli_exclude
-    overrides = cli_option.nil?  ? config&.overrides : cli_option
+    overrides = cli_option.nil?  ? config&.override_options : cli_option
     [['-x', excludes], ['-o', overrides]].each do |flag, values|
       next unless values
 

@@ -13,8 +13,8 @@ RSpec.describe ZfsMgmt::Config do
       expect(props.keys).to include("excludes", "overrides", "zfs")
       expect(props["excludes"]["type"]).to eq("array")
       expect(props["excludes"]["items"]).to eq({ "type" => "string" })
-      expect(props["overrides"]["type"]).to eq("array")
-      expect(props["overrides"]["items"]).to eq({ "type" => "string" })
+      expect(props["overrides"]["type"]).to eq("object")
+      expect(props["overrides"]["additionalProperties"]).to eq({ "type" => "string" })
       expect(props["zfs"]["type"]).to eq("object")
       expect(props["zfs"]["additionalProperties"]["type"]).to eq("object")
       expect(props["zfs"]["additionalProperties"]["properties"].keys).to include("send", "destination", "remote")
@@ -24,8 +24,19 @@ RSpec.describe ZfsMgmt::Config do
       cfg = described_class.new
       expect(cfg).to be_valid
       expect(cfg.excludes).to eq([])
-      expect(cfg.overrides).to eq([])
+      expect(cfg.overrides).to eq({})
+      expect(cfg.override_options).to eq([])
       expect(cfg.zfs).to eq({})
+    end
+
+    it "rejects invalid overrides values and non-Hash overrides" do
+      non_hash = described_class.from_hash("overrides" => ["canmount=noauto"])
+      expect(non_hash).not_to be_valid
+      expect(non_hash.errors[:overrides]).not_to be_empty
+
+      bad_val = described_class.from_hash("overrides" => { "canmount" => 123 })
+      expect(bad_val).not_to be_valid
+      expect(bad_val.errors[:overrides]).not_to be_empty
     end
 
     it "rejects invalid nested Zfs properties" do
@@ -50,7 +61,7 @@ RSpec.describe ZfsMgmt::Config do
         cfg = described_class.load_dir(dir)
         expect(cfg).to be_valid
         expect(cfg.excludes).to eq([])
-        expect(cfg.overrides).to eq([])
+        expect(cfg.overrides).to eq({})
         expect(cfg.zfs).to eq({})
       end
     end
@@ -59,7 +70,10 @@ RSpec.describe ZfsMgmt::Config do
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, "00-base.toml"), <<~TOML)
           excludes = ["mountpoint", "sharenfs"]
-          overrides = ["readonly=on"]
+
+          [overrides]
+          readonly = "on"
+          canmount = "off"
 
           [zfs."pool/zfs"]
           manage = true
@@ -75,6 +89,10 @@ RSpec.describe ZfsMgmt::Config do
         File.write(File.join(dir, "50-local.toml"), <<~TOML)
           excludes = ["mountpoint"]
 
+          [overrides]
+          canmount = "noauto"
+          atime = "off"
+
           [zfs."pool/zfs"]
           remote = "root@newhost"
 
@@ -85,7 +103,12 @@ RSpec.describe ZfsMgmt::Config do
         cfg = described_class.load_dir(dir)
         expect(cfg).to be_valid
         expect(cfg.excludes).to eq(["mountpoint"])
-        expect(cfg.overrides).to eq(["readonly=on"])
+        expect(cfg.overrides).to eq({
+          "readonly" => "on",
+          "canmount" => "noauto",
+          "atime" => "off"
+        })
+        expect(cfg.override_options).to eq(["readonly=on", "canmount=noauto", "atime=off"])
 
         parent = cfg.zfs["pool/zfs"]
         expect(parent).to be_a(ZfsMgmt::Zfs)
@@ -258,7 +281,8 @@ RSpec.describe ZfsMgmt::Config do
       cfg = described_class.load_files([sample_path])
       expect(cfg).to be_valid
       expect(cfg.excludes).to eq(%w[mountpoint sharenfs sharesmb])
-      expect(cfg.overrides).to eq(["canmount=noauto", "readonly=on"])
+      expect(cfg.overrides).to eq({ "canmount" => "noauto", "readonly" => "on" })
+      expect(cfg.override_options).to eq(["canmount=noauto", "readonly=on"])
       expect(cfg.zfs.keys).to match_array(%w[tank tank/data tank/archive])
       expect(cfg.zfs["tank"].policy).to eq("10y6m4w30d24h")
       expect(cfg.zfs["tank/data"].send_enabled).to eq(true)

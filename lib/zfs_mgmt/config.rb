@@ -43,12 +43,13 @@ module ZfsMgmt
 
       property :excludes, T::Array[String], optional: true,
                description: 'ZFS properties to exclude on zfs recv (-x)'
-      property :overrides, T::Array[String], optional: true,
+      property :overrides, T::Hash[String, String], optional: true,
                description: 'ZFS property overrides to set on zfs recv (-o property=value)'
       property :zfs, T::Hash[String, ZfsMgmt::Zfs], optional: true,
                description: 'Per-dataset ZFS configuration keyed by dataset name'
     end
 
+    validate :validate_overrides
     validate :validate_zfs_entries
 
     def initialize(attributes = {})
@@ -63,7 +64,16 @@ module ZfsMgmt
 
       super_attrs = {}
       super_attrs[:excludes] = raw_attrs.key?('excludes') ? raw_attrs['excludes'] : []
-      super_attrs[:overrides] = raw_attrs.key?('overrides') ? raw_attrs['overrides'] : []
+      if raw_attrs.key?('overrides')
+        raw_overrides = raw_attrs['overrides']
+        super_attrs[:overrides] = if raw_overrides.is_a?(Hash)
+                                    raw_overrides.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
+                                  else
+                                    raw_overrides
+                                  end
+      else
+        super_attrs[:overrides] = {}
+      end
 
       if raw_attrs.key?('zfs')
         raw_zfs_input = raw_attrs['zfs']
@@ -77,6 +87,12 @@ module ZfsMgmt
       end
 
       super(super_attrs)
+    end
+
+    def override_options
+      return [] unless overrides.is_a?(Hash)
+
+      overrides.map { |k, v| "#{k}=#{v}" }
     end
 
     def zfs_props_for(dataset_name)
@@ -240,6 +256,19 @@ module ZfsMgmt
       end
     end
     private_class_method :normalize_parsed_zfs_tables!
+
+    def validate_overrides
+      unless overrides.is_a?(Hash)
+        errors.add(:overrides, 'must be a hash of property=value pairs')
+        return
+      end
+
+      overrides.each do |k, v|
+        unless k.is_a?(String) && v.is_a?(String)
+          errors.add(:overrides, "#{k}: property and value must be strings")
+        end
+      end
+    end
 
     def validate_zfs_entries
       unless zfs.is_a?(Hash)

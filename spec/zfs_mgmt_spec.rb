@@ -475,7 +475,7 @@ RSpec.describe ZfsMgmt do
     it "uses config.excludes and config.overrides, allows CLI override, and filters volume-unsupported props" do
       ZfsMgmt.config = ZfsMgmt::Config.from_hash(
         "excludes" => %w[mountpoint sharenfs],
-        "overrides" => %w[canmount=off readonly=on]
+        "overrides" => { "canmount" => "off", "readonly" => "on" }
       )
 
       fs_com = ZfsMgmt.zfs_recv_com({}, [], { "type" => "filesystem" }, "backup/pool/fs")
@@ -1167,7 +1167,7 @@ RSpec.describe ZfsMgmt do
     it "enforces CLI > config > ZFS user property precedence in .zfs_send" do
       ZfsMgmt.config = ZfsMgmt::Config.from_hash(
         "excludes" => ["mountpoint"],
-        "overrides" => ["readonly=on"],
+        "overrides" => { "readonly" => "on" },
         "zfs" => {
           "tank/sub/fs" => {
             "destination" => "config/dest",

@@ -28,10 +28,11 @@ excludes = [
 ]
 
 # Property overrides to set on zfs recv (-o <property>=<value>).
-overrides = [
-  "canmount=noauto",
-  "readonly=on",
-]
+# Note: volume-unsupported properties (canmount, mountpoint, quota) are
+# automatically omitted when receiving ZFS volumes.
+[overrides]
+canmount = "noauto"
+readonly = "on"
 
 # ---------------------------------------------------------------------------
 # Per-dataset options (mirroring zfsmgmt:* user properties)
