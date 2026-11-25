@@ -11,6 +11,7 @@ class ZfsMgmt::ZfsMgr::Snapshot < Thor
   def destroy()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    ZfsMgmt.load_config
     lock = ZfsMgmt.lock(options)
     ZfsMgmt.snapshot_destroy(noop: options[:noop], verbose: options[:verbose], filter: options[:filter])
     ZfsMgmt.unlock(lock)
@@ -21,6 +22,7 @@ class ZfsMgmt::ZfsMgr::Snapshot < Thor
   def policy()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    ZfsMgmt.load_config
     ZfsMgmt.snapshot_policy(filter: options[:filter], show_destroy: options[:show_destroy])
   end
   desc "create", "execute zfs snapshot based on zfs properties"
@@ -29,6 +31,7 @@ class ZfsMgmt::ZfsMgr::Snapshot < Thor
   def create()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    ZfsMgmt.load_config
     lock = ZfsMgmt.lock(options)
     ZfsMgmt.snapshot_create(noop: options[:noop], filter: options[:filter])
   end

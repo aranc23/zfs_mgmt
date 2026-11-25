@@ -471,6 +471,41 @@ RSpec.describe ZfsMgmt do
         '"backup/pool/fs"'
       ])
     end
+
+    it "uses config.excludes and config.overrides, allows CLI override, and filters volume-unsupported props" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "excludes" => %w[mountpoint sharenfs],
+        "overrides" => %w[canmount=off readonly=on]
+      )
+
+      fs_com = ZfsMgmt.zfs_recv_com({}, [], { "type" => "filesystem" }, "backup/pool/fs")
+      expect(fs_com).to eq([
+        "zfs", "recv", "-s",
+        "-x", "mountpoint", "-x", "sharenfs",
+        "-o", "canmount=off", "-o", "readonly=on",
+        '"backup/pool/fs"'
+      ])
+
+      vol_com = ZfsMgmt.zfs_recv_com({}, [], { "type" => "volume" }, "backup/pool/zvol")
+      expect(vol_com).to eq([
+        "zfs", "recv", "-s",
+        "-x", "sharenfs",
+        "-o", "readonly=on",
+        '"backup/pool/zvol"'
+      ])
+
+      cli_opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+        exclude: ["quota"],
+        option: ["compression=lz4"]
+      )
+      cli_com = ZfsMgmt.zfs_recv_com(cli_opts, [], { "type" => "filesystem" }, "backup/pool/fs")
+      expect(cli_com).to eq([
+        "zfs", "recv", "-s",
+        "-x", "quota",
+        "-o", "compression=lz4",
+        '"backup/pool/fs"'
+      ])
+    end
   end
 
   describe ".custom_properties" do
@@ -710,6 +745,75 @@ RSpec.describe ZfsMgmt do
       send_list = ZfsMgmt.zfs_managed_list(property_match: { send_enabled: true })
       expect(send_list.map(&:name)).to eq(["tank/send_ok"])
       expect(send_list.first.destination).to eq("b/p/send_ok")
+    end
+
+    it "merges config properties over ZFS user properties and propagates config inheritance" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "zfs" => {
+          "tank" => {
+            "manage" => true,
+            "policy" => "30d",
+            "destination" => "configpool"
+          },
+          "tank/child" => {
+            "send" => true,
+            "remote" => "root@config-remote"
+          }
+        }
+      )
+
+      allow(ZfsMgmt).to receive(:zfsget).with(properties: ["all"]).and_return({
+        "tank/child" => {
+          "zfsmgmt:manage" => "false",
+          "zfsmgmt:policy" => "7d",
+          "zfsmgmt:minage" => "2h",
+          "zfsmgmt:remote" => "root@zfs-remote"
+        }
+      })
+
+      res = ZfsMgmt.zfs_managed_list
+      expect(res.length).to eq(1)
+      child = res.first
+      expect(child.name).to eq("tank/child")
+      # Config overrides ZFS user properties and inherits from tank in config
+      expect(child.manage).to eq(true)
+      expect(child.policy).to eq("30d")
+      expect(child.send_enabled).to eq(true)
+      expect(child.remote).to eq("root@config-remote")
+      expect(child.destination).to eq("configpool/tank/child")
+      # ZFS user properties not specified in config are preserved
+      expect(child.minage).to eq("2h")
+    end
+  end
+
+  describe ".config_dir" do
+    before do
+      ZfsMgmt.global_options = {}
+    end
+
+    it "uses /etc/zfsmgr when running as root" do
+      allow(Process).to receive(:euid).and_return(0)
+      expect(ZfsMgmt.config_dir).to eq("/etc/zfsmgr")
+    end
+
+    it "uses XDG_CONFIG_HOME/zfsmgr when set for non-root user" do
+      allow(Process).to receive(:euid).and_return(1000)
+      allow(ENV).to receive(:[]).and_call_original
+      allow(ENV).to receive(:[]).with("XDG_CONFIG_HOME").and_return("/custom/xdg/config")
+      expect(ZfsMgmt.config_dir).to eq("/custom/xdg/config/zfsmgr")
+    end
+
+    it "defaults to ~/.config/zfsmgr for non-root user when XDG_CONFIG_HOME is unset" do
+      allow(Process).to receive(:euid).and_return(1000)
+      allow(ENV).to receive(:[]).and_call_original
+      allow(ENV).to receive(:[]).with("XDG_CONFIG_HOME").and_return(nil)
+      allow(Dir).to receive(:home).and_return("/home/testuser")
+      expect(ZfsMgmt.config_dir).to eq("/home/testuser/.config/zfsmgr")
+    end
+
+    it "uses global_options[:config_dir] when specified" do
+      ZfsMgmt.global_options = { config_dir: "/tmp/custom_zfsmgr" }
+      expect(ZfsMgmt.config_dir).to eq("/tmp/custom_zfsmgr")
     end
   end
 
@@ -1056,6 +1160,58 @@ RSpec.describe ZfsMgmt do
       ).and_return({
         "#{dest}@snap2" => { "creation" => 2000, "userrefs" => 0 }
       })
+
+      ZfsMgmt.zfs_send(opts, zfs, props, snaps)
+    end
+
+    it "enforces CLI > config > ZFS user property precedence in .zfs_send" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "excludes" => ["mountpoint"],
+        "overrides" => ["readonly=on"],
+        "zfs" => {
+          "tank/sub/fs" => {
+            "destination" => "config/dest",
+            "remote" => "config@host",
+            "send_intermediary" => true,
+            "recv_unmount" => true
+          }
+        }
+      )
+
+      props = {
+        "zfsmgmt:destination" => "zfs/dest",
+        "zfsmgmt:destination@source" => "local",
+        "zfsmgmt:remote" => "zfs@host",
+        "zfsmgmt:send_intermediary" => "false",
+        "zfsmgmt:send_compressed" => "true"
+      }
+
+      # CLI overrides remote and intermediary, while config overrides destination & unmount,
+      # and ZFS property supplies send_compressed (since config didn't set it).
+      opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+        remote: "cli@host",
+        intermediary: false
+      )
+      dest = "config/dest/fs"
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: ["ssh", "cli@host"]).and_return({
+        dest => {}
+      })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: dest,
+        types: ["snapshot"],
+        command_prefix: ["ssh", "cli@host"],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-c", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "ssh", "cli@host",
+        "'zfs recv -s -u -x mountpoint -o readonly=on \"#{dest}\"'"
+      ]).and_return(status_ok)
 
       ZfsMgmt.zfs_send(opts, zfs, props, snaps)
     end

@@ -10,6 +10,8 @@ gem "json"
 gem "timeout"
 gem "pstore"
 gem "easy_talk"
+gem "tomlrb"
+gem "deep_merge"
 
 gem 'ruby-lsp', group: :development
 gemspec

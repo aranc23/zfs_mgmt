@@ -19,4 +19,8 @@ RSpec.configure do |config|
   config.expect_with :rspec do |c|
     c.syntax = :expect
   end
+
+  config.before(:each) do
+    ZfsMgmt.config = nil
+  end
 end

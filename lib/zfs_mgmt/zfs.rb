@@ -1,9 +1,12 @@
 # coding: utf-8
 require 'easy_talk'
+require 'set'
 
 module ZfsMgmt
   class Zfs
     include EasyTalk::Model
+
+    attr_reader :provided_attributes, :destination_base
 
     SEND_BOOL_PROPS = %i[
       send_intermediary
@@ -35,6 +38,11 @@ module ZfsMgmt
       SEND_BOOL_PROPS.map(&:to_s) +
       RECV_BOOL_PROPS.map(&:to_s)
     ).map { |p| "zfsmgmt:#{p}" }.freeze
+
+    VALID_CONFIG_KEYS = (
+      VALID_ZFS_PROPS.map { |p| p.sub(/\Azfsmgmt:/, '') } +
+      %w[name type snapshot_recursive send_enabled]
+    ).uniq.freeze
 
     define_schema do
       title 'Zfs'
@@ -126,6 +134,7 @@ module ZfsMgmt
       if attrs.key?(:send) && !attrs.key?(:send_enabled)
         attrs[:send_enabled] = attrs.delete(:send)
       end
+      @provided_attributes = attrs.keys.to_set
       super(attrs)
     end
 
