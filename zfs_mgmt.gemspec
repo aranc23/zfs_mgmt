@@ -45,5 +45,7 @@ Gem::Specification.new do |spec|
   spec.add_runtime_dependency "filesize", "~> 0.2"
   spec.add_runtime_dependency "pstore"
   spec.add_runtime_dependency "easy_talk"
+  spec.add_runtime_dependency "tomlrb"
+  spec.add_runtime_dependency "deep_merge"
   
 end

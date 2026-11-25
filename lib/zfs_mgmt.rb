@@ -2,6 +2,7 @@
 require "zfs_mgmt/version"
 require "thor"
 require "zfs_mgmt/zfs"
+require "zfs_mgmt/config"
 require "zfs_mgmt/restic"
 require "zfs_mgmt/zfs_mgr"
 require 'pp'
@@ -47,7 +48,31 @@ $lock = nil
 
 module ZfsMgmt
   class << self
-    attr_accessor :global_options
+    attr_accessor :global_options, :config
+  end
+
+  def self.config_dir
+    if global_options && global_options[:config_dir]
+      return global_options[:config_dir]
+    end
+    if Process.euid == 0
+      '/etc/zfsmgr'
+    elsif ENV['XDG_CONFIG_HOME'] && !ENV['XDG_CONFIG_HOME'].empty?
+      File.join(ENV['XDG_CONFIG_HOME'], 'zfsmgr')
+    else
+      File.join(Dir.home, '.config', 'zfsmgr')
+    end
+  end
+
+  def self.load_config(dir = config_dir)
+    self.config = ZfsMgmt::Config.load_dir(dir)
+  end
+
+  def self.merge_config_props(zfs_name, props)
+    base = props || {}
+    return base unless config && zfs_name && !zfs_name.empty?
+
+    base.merge(config.zfs_props_for(zfs_name))
   end
   class ZfsGetError < StandardError
   end
@@ -182,7 +207,7 @@ module ZfsMgmt
       zfs_obj = zfs
       snaps ||= zfs_obj.snapshots
     else
-      zfs_obj = ZfsMgmt::Zfs.from_zfs_props(zfs, props)
+      zfs_obj = ZfsMgmt::Zfs.from_zfs_props(zfs, merge_config_props(zfs, props))
     end
 
     minage = 0
@@ -267,11 +292,12 @@ module ZfsMgmt
       unless match_filter?(zfs_name, filter)
         next
       end
-      zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, props)
+      merged_props = merge_config_props(zfs_name, props)
+      zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, merged_props)
       managed = true
       property_match.each do |k,v|
         matched = if k.to_s.start_with?('zfsmgmt:')
-                    key_comp?(props, k, v)
+                    key_comp?(merged_props, k, v)
                   else
                     attr_name = (k.to_sym == :send ? :send_enabled : k.to_sym)
                     match_value?(zfs.public_send(attr_name), v)
@@ -417,7 +443,7 @@ module ZfsMgmt
       zfs_obj = zfs
       snaps ||= zfs_obj.snapshots
     else
-      zfs_obj = ZfsMgmt::Zfs.from_zfs_props(zfs, props)
+      zfs_obj = ZfsMgmt::Zfs.from_zfs_props(zfs, merge_config_props(zfs, props))
     end
     zfs_name = zfs_obj.name
     sorted = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }
@@ -625,7 +651,11 @@ module ZfsMgmt
     end
     zfs_recv_com.push('-v') if key_comp?(options, 'verbose', ['receive', 'recv'])
     volume = zfs_obj.volume?
-    [['-x', options[:exclude]], ['-o', options[:option]]].each do |flag, values|
+    cli_exclude = options.key?(:exclude) ? options[:exclude] : options['exclude']
+    cli_option  = options.key?(:option)  ? options[:option]  : options['option']
+    excludes  = cli_exclude.nil? ? config&.excludes : cli_exclude
+    overrides = cli_option.nil?  ? config&.override_options : cli_option
+    [['-x', excludes], ['-o', overrides]].each do |flag, values|
       next unless values
 
       values.each do |val|

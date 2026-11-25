@@ -37,6 +37,7 @@ class ZfsMgmt::ZfsMgr::Send < Thor
   def all()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    ZfsMgmt.load_config
     lock = ZfsMgmt.lock(options)
 
     ZfsMgmt.zfs_send_all(options)

@@ -21,6 +21,7 @@ class ZfsMgmt::ZfsMgr::Backup < Thor
   def incremental()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    ZfsMgmt.load_config
     ZfsMgmt::Restic.backup(backup_level: options[:level], options: options)
   end
   desc "differential", "perform differential backup"
@@ -28,12 +29,14 @@ class ZfsMgmt::ZfsMgr::Backup < Thor
   def differential()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    ZfsMgmt.load_config
     ZfsMgmt::Restic.backup(backup_level: 1, options: options)
   end
   desc "full", "perform full backup"
   def full()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    ZfsMgmt.load_config
     ZfsMgmt::Restic.backup(backup_level: 0, options: options)
   end
 end

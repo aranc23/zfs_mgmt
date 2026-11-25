@@ -24,12 +24,15 @@ class ZfsMgr < Thor
                :desc => 'lock file'
   class_option :lock_wait, :type => :numeric, :default => 0,
                :desc => 'wait N seconds for lock'
+  class_option :config_dir, :type => :string,
+               :desc => 'directory containing zfsmgr .toml config files'
   desc "zfsget [ZFS]", "execute zfs get for the given properties and types and parse the output into a nested hash"
   method_option :properties, :type => :string, :default => ['name'], :desc => "List of properties passed to zfs get", repeatable: true
   method_option :types,      :type => :array, :default => ['filesystem','volume'], enum: ['filesystem','volume','snapshot'], :desc => "list of types"
   def zfsget(zfs)
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    ZfsMgmt.load_config
     pp ZfsMgmt.zfsget(properties: options[:properties],
                       types: options[:types],
                       zfs: zfs)

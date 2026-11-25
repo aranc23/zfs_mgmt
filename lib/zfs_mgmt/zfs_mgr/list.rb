@@ -9,6 +9,7 @@ class ZfsMgmt::ZfsMgr::List < Thor
   def stale()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    ZfsMgmt.load_config
     cutoff = Time.at(Time.now.to_i -  ZfsMgmt.timespec_to_seconds(options[:age]))
     table = Text::Table.new
     table.head = ['zfs','snapshot','age']
@@ -35,6 +36,7 @@ class ZfsMgmt::ZfsMgr::List < Thor
   def holds()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options
+    ZfsMgmt.load_config
     table = Text::Table.new
     table.head = ['snapshot','userrefs','holds']
     table.rows = []
