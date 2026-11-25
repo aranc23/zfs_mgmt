@@ -1,0 +1,85 @@
+# Sample configuration for zfsmgr
+#
+# Configuration files are loaded from *.toml in:
+#   - /etc/zfsmgr/*.toml                          (when running as root)
+#   - $XDG_CONFIG_HOME/zfsmgr/*.toml              (when non-root and XDG_CONFIG_HOME is set)
+#   - ~/.config/zfsmgr/*.toml                     (when non-root and XDG_CONFIG_HOME is unset)
+#   - --config-dir <path>                         (CLI override)
+#
+# Multiple *.toml files in the directory are loaded in lexicographical sort() order
+# (e.g. 00-base.toml then 50-local.toml) and deep-merged, with later files replacing
+# earlier scalars, arrays, and dataset keys.
+#
+# Precedence: CLI options > config file values > ZFS dataset user properties (zfsmgmt:*).
+# Dataset options configured here also inherit to child datasets (e.g. tank -> tank/data)
+# with the same source semantics as ZFS user properties.
+
+# ---------------------------------------------------------------------------
+# Top-level zfs recv options (previously only available via CLI flags)
+# ---------------------------------------------------------------------------
+
+# Properties to exclude on zfs recv (-x <property>).
+# Note: volume-unsupported properties (canmount, mountpoint, quota) are
+# automatically omitted when receiving ZFS volumes.
+excludes = [
+  "mountpoint",
+  "sharenfs",
+  "sharesmb",
+]
+
+# Property overrides to set on zfs recv (-o <property>=<value>).
+overrides = [
+  "canmount=noauto",
+  "readonly=on",
+]
+
+# ---------------------------------------------------------------------------
+# Per-dataset options (mirroring zfsmgmt:* user properties)
+# ---------------------------------------------------------------------------
+
+# Parent dataset: snapshot retention & creation defaults inherited by children
+[zfs."tank"]
+manage = true
+policy = "10y6m4w30d24h"
+strategy = "oldest"             # "oldest" (default) or "youngest"
+minage = "7d"                   # s, m, h, d, w (or unitless seconds)
+matchsnaps = "^zfsmgmt-"        # regexp snapshot name must match to satisfy policy
+ignoresnaps = "^syncoid_"       # regexp snapshot name to ignore for policy & destroy
+prefersnaps = "^daily-"         # regexp snapshot name preferred when retaining
+snapshot = true                 # true, false, "recursive", or "local"
+snap_prefix = "zfsmgmt"
+snap_timestamp = "%FT%T%z"
+
+# Child dataset: inherits tank's snapshot policy, configures zfs send/recv
+[zfs."tank/data"]
+send = true                     # true, false, or "local" (only send this dataset)
+remote = "zfs_recv@backup.example.com"
+destination = "backup/tank"
+
+# zfs send flags
+send_intermediary = true        # -I
+send_backup = false             # -b
+send_compressed = true          # -c
+send_embed = false              # -e
+send_holds = true               # -h
+send_large_block = false        # -L
+send_props = true               # -p
+send_raw = true                 # -w
+send_replicate = false          # -R (only applies on dataset where set locally)
+
+# zfs recv flags
+recv_state = true               # -s (defaults to true unless set to false)
+recv_noop = false               # -n
+recv_drop_holds = false         # -h
+recv_unmount = true             # -u
+recv_discard_first = false      # -d (uses base destination as target)
+recv_force = false              # -F
+
+# Child dataset with local overrides and restic backup settings
+[zfs."tank/archive"]
+manage = false
+snapshot = "recursive"
+send = "local"
+destination = "backup/archive"
+restic_backup = true
+restic_repository = "/srv/restic/zfs"

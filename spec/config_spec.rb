@@ -249,4 +249,22 @@ RSpec.describe ZfsMgmt::Config do
       })
     end
   end
+
+  describe "examples/config.toml" do
+    it "parses cleanly without warnings and produces a valid Config" do
+      sample_path = File.expand_path("../examples/config.toml", __dir__)
+      expect($logger).not_to receive(:warn)
+
+      cfg = described_class.load_files([sample_path])
+      expect(cfg).to be_valid
+      expect(cfg.excludes).to eq(%w[mountpoint sharenfs sharesmb])
+      expect(cfg.overrides).to eq(["canmount=noauto", "readonly=on"])
+      expect(cfg.zfs.keys).to match_array(%w[tank tank/data tank/archive])
+      expect(cfg.zfs["tank"].policy).to eq("10y6m4w30d24h")
+      expect(cfg.zfs["tank/data"].send_enabled).to eq(true)
+      expect(cfg.zfs["tank/data"].manage).to eq(true)
+      expect(cfg.zfs["tank/archive"].restic_backup).to eq(true)
+      expect(cfg.zfs["tank/archive"].snapshot_recursive).to eq(true)
+    end
+  end
 end
