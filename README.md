@@ -300,32 +300,25 @@ Path resolution rules:
 - When the source is `received` (or unrecognized), no destination is
   resolved.
 
-### zfsmgmt:send_intermediary (default: false)
-Boolean (`true`/`on`). Pass `-I` (include intermediary snapshots) to
-`zfs send`.
+### zfs send / recv flags
 
-### zfsmgmt:send_backup (default: false)
-Boolean (`true`/`on`). Pass `-b` (send received property values) to
-`zfs send`.
+The following boolean options (`true`/`on`, or `false`/`off` in ZFS user properties; `true`/`false` in `[zfs."<dataset>"]` TOML config) map directly to `zfs send` or `zfs recv` command-line flags and can be overridden via `zfsmgr send all` CLI flags:
 
-### zfsmgmt:send_compressed (default: false)
-Boolean (`true`/`on`). Pass `-c` (send compressed blocks) to `zfs send`.
-
-### zfsmgmt:send_embed (default: false)
-Boolean (`true`/`on`). Pass `-e` (send embedded data) to `zfs send`.
-
-### zfsmgmt:send_holds (default: false)
-Boolean (`true`/`on`). Pass `-h` (send snapshot holds) to `zfs send`.
-
-### zfsmgmt:send_large_block (default: false)
-Boolean (`true`/`on`). Pass `-L` (allow large blocks) to `zfs send`.
-
-### zfsmgmt:send_props (default: false)
-Boolean (`true`/`on`). Pass `-p` (send properties) to `zfs send`.
-
-### zfsmgmt:send_raw (default: false)
-Boolean (`true`/`on`). Pass `-w` (send raw encrypted stream) to
-`zfs send`.
+| User Property | Config Key | ZFS Option | Default | Description |
+| --- | --- | --- | --- | --- |
+| `zfsmgmt:send_intermediary` | `send_intermediary` | `zfs send -I` | `false` | Include intermediary snapshots |
+| `zfsmgmt:send_backup` | `send_backup` | `zfs send -b` | `false` | Send received property values |
+| `zfsmgmt:send_compressed` | `send_compressed` | `zfs send -c` | `false` | Send compressed blocks |
+| `zfsmgmt:send_embed` | `send_embed` | `zfs send -e` | `false` | Send embedded data |
+| `zfsmgmt:send_holds` | `send_holds` | `zfs send -h` | `false` | Send snapshot holds |
+| `zfsmgmt:send_large_block` | `send_large_block` | `zfs send -L` | `false` | Allow large blocks |
+| `zfsmgmt:send_props` | `send_props` | `zfs send -p` | `false` | Send properties |
+| `zfsmgmt:send_raw` | `send_raw` | `zfs send -w` | `false` | Send raw encrypted stream |
+| `zfsmgmt:recv_state` | `recv_state` | `zfs recv -s` | `true` | Save partial receive state for resuming |
+| `zfsmgmt:recv_noop` | `recv_noop` | `zfs recv -n` | `false` | Dry-run (do not actually receive) |
+| `zfsmgmt:recv_drop_holds` | `recv_drop_holds` | `zfs recv -h` | `false` | Skip receiving holds |
+| `zfsmgmt:recv_unmount` | `recv_unmount` | `zfs recv -u` | `false` | Do not mount received filesystem |
+| `zfsmgmt:recv_force` | `recv_force` | `zfs recv -F` | `false` | Force rollback |
 
 ### zfsmgmt:send_replicate (default: false)
 Boolean (`true`/`on`). Pass `-R` (replication stream) to `zfs send` and
@@ -334,30 +327,11 @@ dataset where `zfsmgmt:send_replicate` is `local`; descendant datasets
 inheriting it have both `send` and `send_replicate` disabled so they are
 not sent separately.
 
-### zfsmgmt:recv_state (default: true)
-Boolean. Pass `-s` (save partial receive state for resuming) to
-`zfs recv`. Enabled by default unless set to `false` or `off` (or
-overridden on the CLI).
-
-### zfsmgmt:recv_noop (default: false)
-Boolean (`true`/`on`). Pass `-n` (dry-run / do not actually receive) to
-`zfs recv`.
-
-### zfsmgmt:recv_drop_holds (default: false)
-Boolean (`true`/`on`). Pass `-h` (skip receiving holds) to `zfs recv`.
-
-### zfsmgmt:recv_unmount (default: false)
-Boolean (`true`/`on`). Pass `-u` (do not mount received filesystem) to
-`zfs recv`.
-
 ### zfsmgmt:recv_discard_first (default: false)
 Boolean (`true`/`on`). Pass `-d` (discard the first element of the sent
 snapshot's filesystem name) to `zfs recv`, passing the base
 `zfsmgmt:destination` as the `zfs recv` target and
 stripping the first path element for remote existence/snapshot checks.
-
-### zfsmgmt:recv_force (default: false)
-Boolean (`true`/`on`). Pass `-F` (force rollback) to `zfs recv`.
 
 ### zfsmgmt:excludes
 Comma-separated list of ZFS properties to exclude on `zfs recv` (`-x`),
