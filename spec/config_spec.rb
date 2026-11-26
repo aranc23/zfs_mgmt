@@ -125,7 +125,7 @@ RSpec.describe ZfsMgmt::Config do
       end
     end
 
-    it "supports [[zfs.\"dataset\"]] array-of-tables syntax in TOML" do
+    it "rejects [[zfs.\"dataset\"]] array-of-tables syntax in TOML" do
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, "10-send.toml"), <<~TOML)
           [[zfs."pool/zfs/zfs2"]]
@@ -134,11 +134,21 @@ RSpec.describe ZfsMgmt::Config do
           remote = "root@host"
         TOML
 
-        cfg = described_class.load_dir(dir)
-        expect(cfg.zfs["pool/zfs/zfs2"].send_enabled).to eq(true)
-        expect(cfg.zfs["pool/zfs/zfs2"].destination).to eq("otherpool/zfs2")
-        expect(cfg.zfs["pool/zfs/zfs2"].remote).to eq("root@host")
+        expect($logger).to receive(:error).with(/invalid configuration.*pool\/zfs\/zfs2.*must be a Zfs configuration table/)
+        expect { described_class.load_dir(dir) }.to raise_error(
+          ZfsMgmt::ConfigError,
+          /invalid configuration.*pool\/zfs\/zfs2.*must be a Zfs configuration table/
+        )
       end
+
+      cfg = described_class.from_hash(
+        "zfs" => {
+          "pool/zfs/zfs2" => [{ "send" => true }]
+        }
+      )
+      expect(cfg).not_to be_valid
+      expect(cfg.errors[:zfs].join).to include("pool/zfs/zfs2")
+      expect(cfg.errors[:zfs].join).to include("must be a Zfs configuration table")
     end
 
     it "raises ConfigError and logs an error on invalid TOML syntax" do
