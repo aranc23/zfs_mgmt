@@ -30,8 +30,8 @@ class ZfsMgmt::ZfsMgr::Send < Thor
   method_option :discard_first, :desc => "pass the -d option to zfs recv, discarding the first element of the send snapshot's file system name", :type => :boolean
   method_option :recv_state, :aliases => :'-s', :desc => "pass the -s option to zfs recv to save partial receive state for resuming (defaults to true unless disabled)", :type => :boolean
 
-  method_option :mbuffer, :desc => "insert mbuffer between send and recv", :default => true, :type => :boolean
-  method_option :mbuffer_size, :desc => "passed to mbuffer -s option", :type => :string
+  method_option :mbuffer, :desc => "insert mbuffer between send and recv (defaults to true unless disabled)", :type => :boolean
+  method_option :mbuffer_size, :desc => "passed to mbuffer -m option", :type => :string
   def all()
     ZfsMgmt.set_log_level(options[:loglevel])
     ZfsMgmt.global_options = options

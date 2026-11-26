@@ -11,7 +11,7 @@ module ZfsMgmt
   class Config
     include EasyTalk::Model
 
-    TOP_LEVEL_KEYS = %w[excludes overrides ssh_config zfs].freeze
+    TOP_LEVEL_KEYS = %w[excludes overrides ssh_config mbuffer mbuffer_size zfs].freeze
     JSON_SCHEMA_DRAFT = 'http://json-schema.org/draft-07/schema#'
     JSON_SCHEMA_URL = 'https://raw.githubusercontent.com/aranc23/zfs_mgmt/master/schema/config.schema.json'
 
@@ -25,6 +25,10 @@ module ZfsMgmt
                description: 'ZFS property overrides to set on zfs recv (-o property=value)'
       property :ssh_config, T::Hash[String, String], optional: true,
                description: 'SSH options passed via -o option=value (merged with BatchMode=yes default)'
+      property :mbuffer, T::Boolean, optional: true,
+               description: 'Whether to insert mbuffer between zfs send and zfs recv (defaults to true)'
+      property :mbuffer_size, String, optional: true,
+               description: 'Buffer size passed to mbuffer -m option (e.g. 512M, 1G)'
       property :zfs, T::Hash[String, ZfsMgmt::Zfs], optional: true,
                description: 'Per-dataset ZFS configuration keyed by dataset name'
     end
@@ -32,6 +36,8 @@ module ZfsMgmt
     validate :validate_excludes
     validate :validate_overrides
     validate :validate_ssh_config
+    validate :validate_mbuffer
+    validate :validate_mbuffer_size
     validate :validate_zfs_entries
 
     def initialize(attributes = {})
@@ -67,6 +73,9 @@ module ZfsMgmt
       else
         super_attrs[:ssh_config] = {}
       end
+
+      super_attrs[:mbuffer] = raw_attrs['mbuffer'] if raw_attrs.key?('mbuffer')
+      super_attrs[:mbuffer_size] = raw_attrs['mbuffer_size'] if raw_attrs.key?('mbuffer_size')
 
       if raw_attrs.key?('zfs')
         raw_zfs_input = raw_attrs['zfs']
@@ -383,6 +392,18 @@ module ZfsMgmt
       validate_top_level_hash(:ssh_config, ssh_config, 'hash of option=value pairs', table_hint: 'use [ssh_config], not [[ssh_config]]')
     end
 
+    def validate_mbuffer
+      return if mbuffer.nil? || mbuffer == true || mbuffer == false
+
+      errors.add(:mbuffer, 'must be a boolean')
+    end
+
+    def validate_mbuffer_size
+      return if mbuffer_size.nil? || mbuffer_size.is_a?(String)
+
+      errors.add(:mbuffer_size, 'must be a string')
+    end
+
     def validate_top_level_hash(attr, value, expected_desc, table_hint: nil)
       if value.is_a?(Array) && table_hint
         errors.add(attr, "must be a #{expected_desc} (#{table_hint})")
@@ -436,6 +457,17 @@ module ZfsMgmt
           end
           if raw_entry.key?('ssh_config')
             validate_per_zfs_hash(dataset_name, 'ssh_config', raw_entry['ssh_config'], 'table of option=value pairs', 'hash of option=value pairs')
+          end
+          if raw_entry.key?('mbuffer')
+            raw_mbuffer = raw_entry['mbuffer']
+            unless raw_mbuffer == true || raw_mbuffer == false
+              errors.add(:zfs, "#{dataset_name}: mbuffer must be a boolean")
+            end
+          end
+          if raw_entry.key?('mbuffer_size')
+            unless raw_entry['mbuffer_size'].is_a?(String)
+              errors.add(:zfs, "#{dataset_name}: mbuffer_size must be a string")
+            end
           end
         end
         unless zfs_obj.valid?

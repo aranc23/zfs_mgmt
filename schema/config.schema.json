@@ -26,6 +26,14 @@
         "type": "string"
       }
     },
+    "mbuffer": {
+      "type": "boolean",
+      "description": "Whether to insert mbuffer between zfs send and zfs recv (defaults to true)"
+    },
+    "mbuffer_size": {
+      "type": "string",
+      "description": "Buffer size passed to mbuffer -m option (e.g. 512M, 1G)"
+    },
     "zfs": {
       "type": "object",
       "description": "Per-dataset ZFS configuration keyed by dataset name",
@@ -241,6 +249,15 @@
             "additionalProperties": {
               "type": "string"
             }
+          },
+          "mbuffer": {
+            "type": "boolean",
+            "description": "Whether to insert mbuffer between zfs send and zfs recv",
+            "default": true
+          },
+          "mbuffer_size": {
+            "type": "string",
+            "description": "Buffer size passed to mbuffer -m option (e.g. 512M, 1G)"
           },
           "restic_backup": {
             "type": "boolean",

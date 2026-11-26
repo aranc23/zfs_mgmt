@@ -41,6 +41,8 @@ RSpec.describe ZfsMgmt::Zfs do
         "recv_unmount",
         "recv_discard_first",
         "recv_force",
+        "mbuffer",
+        "mbuffer_size",
         "excludes",
         "overrides",
         "ssh_config",
@@ -49,6 +51,7 @@ RSpec.describe ZfsMgmt::Zfs do
       )
       expect(props["strategy"]["enum"]).to eq(%w[oldest youngest])
       expect(props["recv_state"]["default"]).to eq(true)
+      expect(props["mbuffer"]["default"]).to eq(true)
       expect(props["send"]["type"]).to eq("boolean")
       expect(props["excludes"]["type"]).to eq("array")
       expect(props["excludes"]["items"]).to eq({ "type" => "string" })
@@ -71,6 +74,8 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(zfs.send?).to eq(false)
       expect(zfs.volume?).to eq(false)
       expect(zfs.recv_state).to eq(true)
+      expect(zfs.mbuffer).to eq(true)
+      expect(zfs.mbuffer_size).to be_nil
       expect(zfs.excludes).to eq([])
       expect(zfs.overrides).to eq({})
       expect(zfs.override_options).to eq([])
@@ -134,6 +139,12 @@ RSpec.describe ZfsMgmt::Zfs do
         ssh_config: { "BatchMode" => "no", "ArbitraryOption" => "anything" }
       )
       expect(valid_ssh).to be_valid
+    end
+
+    it "validates mbuffer is a boolean and mbuffer_size is a string" do
+      expect(described_class.new(name: "tank/data", mbuffer: false, mbuffer_size: "512M")).to be_valid
+      expect(described_class.new(name: "tank/data", mbuffer: "false")).not_to be_valid
+      expect(described_class.new(name: "tank/data", mbuffer_size: 512)).not_to be_valid
     end
   end
 
@@ -406,6 +417,8 @@ RSpec.describe ZfsMgmt::Zfs do
         "zfsmgmt:send_compressed" => "on",
         "zfsmgmt:send_raw" => "true",
         "zfsmgmt:recv_state" => "off",
+        "zfsmgmt:mbuffer" => "off",
+        "zfsmgmt:mbuffer_size" => "256M",
         "zfsmgmt:recv_unmount" => "true",
         "zfsmgmt:recv_force" => "on",
         "zfsmgmt:restic_backup" => "true",
@@ -428,6 +441,8 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(zfs.send_raw).to eq(true)
       expect(zfs.send_props).to eq(false)
       expect(zfs.recv_state).to eq(false)
+      expect(zfs.mbuffer).to eq(false)
+      expect(zfs.mbuffer_size).to eq("256M")
       expect(zfs.recv_unmount).to eq(true)
       expect(zfs.recv_force).to eq(true)
       expect(zfs.restic_backup).to eq(true)
@@ -463,6 +478,7 @@ RSpec.describe ZfsMgmt::Zfs do
       props["zfsmgmt:excludes"] = "mountpoint,sharenfs"
       props["zfsmgmt:overrides"] = "canmount=noauto,readonly=on"
       props["zfsmgmt:ssh_config"] = "BatchMode=no,Compression=yes"
+      props["zfsmgmt:mbuffer_size"] = "512M"
 
       described_class.from_zfs_props("tank/app", props)
     end

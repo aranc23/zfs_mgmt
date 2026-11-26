@@ -10,16 +10,18 @@ RSpec.describe ZfsMgmt::Config do
       expect(schema["type"]).to eq("object")
 
       props = schema["properties"]
-      expect(props.keys).to include("excludes", "overrides", "ssh_config", "zfs")
+      expect(props.keys).to include("excludes", "overrides", "ssh_config", "mbuffer", "mbuffer_size", "zfs")
       expect(props["excludes"]["type"]).to eq("array")
       expect(props["excludes"]["items"]).to eq({ "type" => "string" })
       expect(props["overrides"]["type"]).to eq("object")
       expect(props["overrides"]["additionalProperties"]).to eq({ "type" => "string" })
       expect(props["ssh_config"]["type"]).to eq("object")
       expect(props["ssh_config"]["additionalProperties"]).to eq({ "type" => "string" })
+      expect(props["mbuffer"]["type"]).to eq("boolean")
+      expect(props["mbuffer_size"]["type"]).to eq("string")
       expect(props["zfs"]["type"]).to eq("object")
       expect(props["zfs"]["additionalProperties"]["type"]).to eq("object")
-      expect(props["zfs"]["additionalProperties"]["properties"].keys).to include("send", "destination", "remote", "excludes", "overrides", "ssh_config")
+      expect(props["zfs"]["additionalProperties"]["properties"].keys).to include("send", "destination", "remote", "excludes", "overrides", "ssh_config", "mbuffer", "mbuffer_size")
     end
 
     it "applies sensible defaults and validates valid configs" do
@@ -29,10 +31,12 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg.overrides).to eq({})
       expect(cfg.override_options).to eq([])
       expect(cfg.ssh_config).to eq({})
+      expect(cfg.mbuffer).to be_nil
+      expect(cfg.mbuffer_size).to be_nil
       expect(cfg.zfs).to eq({})
     end
 
-    it "rejects invalid overrides, ssh_config, and excludes values" do
+    it "rejects invalid overrides, ssh_config, mbuffer, mbuffer_size, and excludes values" do
       non_hash = described_class.from_hash("overrides" => ["canmount=noauto"])
       expect(non_hash).not_to be_valid
       expect(non_hash.errors[:overrides]).not_to be_empty
@@ -48,6 +52,22 @@ RSpec.describe ZfsMgmt::Config do
       bad_ssh_val = described_class.from_hash("ssh_config" => { "ConnectTimeout" => 10 })
       expect(bad_ssh_val).not_to be_valid
       expect(bad_ssh_val.errors[:ssh_config]).not_to be_empty
+
+      bad_mbuffer = described_class.from_hash("mbuffer" => "false")
+      expect(bad_mbuffer).not_to be_valid
+      expect(bad_mbuffer.errors[:mbuffer]).not_to be_empty
+
+      bad_mbuffer_size = described_class.from_hash("mbuffer_size" => 512)
+      expect(bad_mbuffer_size).not_to be_valid
+      expect(bad_mbuffer_size.errors[:mbuffer_size]).not_to be_empty
+
+      bad_per_zfs_mbuffer = described_class.from_hash("zfs" => { "pool/ds" => { "mbuffer" => "no" } })
+      expect(bad_per_zfs_mbuffer).not_to be_valid
+      expect(bad_per_zfs_mbuffer.errors[:zfs].join).to include("pool/ds: mbuffer must be a boolean")
+
+      bad_per_zfs_mbuffer_size = described_class.from_hash("zfs" => { "pool/ds" => { "mbuffer_size" => 256 } })
+      expect(bad_per_zfs_mbuffer_size).not_to be_valid
+      expect(bad_per_zfs_mbuffer_size.errors[:zfs].join).to include("pool/ds: mbuffer_size must be a string")
 
       bad_excl = described_class.from_hash("excludes" => "mountpoint")
       expect(bad_excl).not_to be_valid
@@ -526,6 +546,43 @@ RSpec.describe ZfsMgmt::Config do
       expect(bad_per_zfs_ssh).not_to be_valid
       expect(bad_per_zfs_ssh.errors[:zfs].join).to include("pool/ds: ssh_config.ConnectTimeout: property and value must be strings")
     end
+
+    it "loads and merges top-level and per-dataset mbuffer and mbuffer_size options with inheritance" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "00-base.toml"), <<~TOML)
+          mbuffer = true
+          mbuffer_size = "256M"
+
+          [zfs."pool"]
+          mbuffer = false
+          mbuffer_size = "512M"
+
+          [zfs."pool/child"]
+          mbuffer = true
+        TOML
+
+        File.write(File.join(dir, "50-local.toml"), <<~TOML)
+          mbuffer = false
+          mbuffer_size = "128M"
+
+          [zfs."pool/child"]
+          mbuffer_size = "1G"
+        TOML
+
+        cfg = described_class.load_dir(dir)
+        expect(cfg).to be_valid
+        expect(cfg.mbuffer).to eq(false)
+        expect(cfg.mbuffer_size).to eq("128M")
+        expect(cfg.zfs["pool"].mbuffer).to eq(false)
+        expect(cfg.zfs["pool"].mbuffer_size).to eq("512M")
+        expect(cfg.zfs["pool/child"].mbuffer).to eq(true)
+        expect(cfg.zfs["pool/child"].mbuffer_size).to eq("1G")
+
+        grandchild = ZfsMgmt::Zfs.from_zfs_props("pool/child/grand", cfg.zfs_props_for("pool/child/grand"))
+        expect(grandchild.mbuffer).to eq(true)
+        expect(grandchild.mbuffer_size).to eq("1G")
+      end
+    end
   end
 
   describe "examples/config.toml" do
@@ -535,6 +592,8 @@ RSpec.describe ZfsMgmt::Config do
 
       cfg = described_class.load_files([sample_path])
       expect(cfg).to be_valid
+      expect(cfg.mbuffer).to eq(true)
+      expect(cfg.mbuffer_size).to eq("512M")
       expect(cfg.excludes).to eq(%w[mountpoint sharenfs sharesmb])
       expect(cfg.overrides).to eq({ "canmount" => "noauto", "readonly" => "on" })
       expect(cfg.override_options).to eq(["canmount=noauto", "readonly=on"])
@@ -546,10 +605,12 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg.zfs["tank/data"].destination).to eq("zfs_recv@backup.example.com:backup/tank/data")
       expect(cfg.zfs["tank/data"].destination_remote).to eq("zfs_recv@backup.example.com")
       expect(cfg.zfs["tank/data"].destination_path).to eq("backup/tank/data")
+      expect(cfg.zfs["tank/data"].mbuffer_size).to eq("1G")
       expect(cfg.zfs["tank/data"].excludes).to eq(["quota"])
       expect(cfg.zfs["tank/data"].overrides).to eq({ "canmount" => "**", "compression" => "zstd" })
       expect(cfg.zfs["tank/data"].override_options).to eq(["compression=zstd"])
       expect(cfg.zfs["tank/data"].ssh_config).to eq({ "ConnectTimeout" => "30" })
+      expect(cfg.zfs["tank/archive"].mbuffer).to eq(false)
       expect(cfg.zfs["tank/archive"].destinations).to eq([
         "backup/archive/archive",
         "zfs_recv@offsite.example.com:offsite/archive/archive"

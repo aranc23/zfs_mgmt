@@ -399,6 +399,25 @@ RSpec.describe ZfsMgmt do
       it "does not expose a --destination CLI option on send all" do
         expect(described_class.commands["all"].options.keys).not_to include("destination", :destination)
       end
+
+      it "leaves mbuffer unset by default and passes --mbuffer / --no-mbuffer and --mbuffer-size when provided" do
+        expect(ZfsMgmt).to receive(:zfs_send_all) do |opts|
+          expect(opts.key?(:mbuffer)).to eq(false)
+          expect(opts[:mbuffer_size]).to be_nil
+        end
+        described_class.start(["all"])
+
+        expect(ZfsMgmt).to receive(:zfs_send_all) do |opts|
+          expect(opts[:mbuffer]).to eq(false)
+        end
+        described_class.start(["all", "--no-mbuffer"])
+
+        expect(ZfsMgmt).to receive(:zfs_send_all) do |opts|
+          expect(opts[:mbuffer]).to eq(true)
+          expect(opts[:mbuffer_size]).to eq("512M")
+        end
+        described_class.start(["all", "--mbuffer", "--mbuffer-size", "512M"])
+      end
     end
   end
 
@@ -482,7 +501,7 @@ RSpec.describe ZfsMgmt do
         "ssh",
         "-o", "BatchMode=yes",
         "root@drhost",
-        "'zfs recv -s -u -F \"backup/pool/fs\"'"
+        "'mbuffer -q | zfs recv -s -u -F \"backup/pool/fs\"'"
       ])
     end
 
@@ -492,7 +511,7 @@ RSpec.describe ZfsMgmt do
         "ssh",
         "-o", "BatchMode=yes",
         "zfs_recv@backuphost",
-        "'zfs recv -s \"backup/pool/fs\"'"
+        "'mbuffer -q | zfs recv -s \"backup/pool/fs\"'"
       ])
 
       host_only = ZfsMgmt.zfs_recv_com({}, [], {}, "backuphost:backup/pool/fs")
@@ -500,7 +519,7 @@ RSpec.describe ZfsMgmt do
         "ssh",
         "-o", "BatchMode=yes",
         "backuphost",
-        "'zfs recv -s \"backup/pool/fs\"'"
+        "'mbuffer -q | zfs recv -s \"backup/pool/fs\"'"
       ])
     end
 
@@ -525,7 +544,41 @@ RSpec.describe ZfsMgmt do
         "-o", "BatchMode=no",
         "-o", "Compression=yes",
         "drhost",
-        "'zfs recv -s \"backup/tank/data\"'"
+        "'mbuffer -q | zfs recv -s \"backup/tank/data\"'"
+      ])
+    end
+
+    it "respects mbuffer and mbuffer_size precedence across CLI, per-zfs config, top-level config, and ZFS props" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "mbuffer" => false,
+        "mbuffer_size" => "256M",
+        "zfs" => {
+          "tank/enabled" => { "mbuffer" => true, "mbuffer_size" => "1G" },
+          "tank/toponly" => {}
+        }
+      )
+
+      # Top-level mbuffer = false disables mbuffer when per-dataset doesn't override
+      top_off = ZfsMgmt.build_zfs_from_props("tank/toponly", { "zfsmgmt:mbuffer" => "true" })
+      expect(ZfsMgmt.zfs_recv_com({}, [], top_off, "drhost:backup/tank/toponly")).to eq([
+        "ssh", "-o", "BatchMode=yes", "drhost", "'zfs recv -s \"backup/tank/toponly\"'"
+      ])
+
+      # Per-dataset mbuffer = true & mbuffer_size = 1G override top-level config
+      ds_on = ZfsMgmt.build_zfs_from_props("tank/enabled", { "zfsmgmt:mbuffer" => "false", "zfsmgmt:mbuffer_size" => "64M" })
+      expect(ZfsMgmt.zfs_recv_com({}, [], ds_on, "drhost:backup/tank/enabled")).to eq([
+        "ssh", "-o", "BatchMode=yes", "drhost", "'mbuffer -q -m 1G | zfs recv -s \"backup/tank/enabled\"'"
+      ])
+
+      # CLI --no-mbuffer and --mbuffer-size override per-dataset config
+      cli_off = Thor::CoreExt::HashWithIndifferentAccess.new(mbuffer: false)
+      expect(ZfsMgmt.zfs_recv_com(cli_off, [], ds_on, "drhost:backup/tank/enabled")).to eq([
+        "ssh", "-o", "BatchMode=yes", "drhost", "'zfs recv -s \"backup/tank/enabled\"'"
+      ])
+
+      cli_size = Thor::CoreExt::HashWithIndifferentAccess.new(mbuffer: true, mbuffer_size: "2G")
+      expect(ZfsMgmt.zfs_recv_com(cli_size, [], top_off, "drhost:backup/tank/toponly")).to eq([
+        "ssh", "-o", "BatchMode=yes", "drhost", "'mbuffer -q -m 2G | zfs recv -s \"backup/tank/toponly\"'"
       ])
     end
 
@@ -792,6 +845,8 @@ RSpec.describe ZfsMgmt do
         "zfsmgmt:remote",
         "zfsmgmt:destination",
         "zfsmgmt:recv_state",
+        "zfsmgmt:mbuffer",
+        "zfsmgmt:mbuffer_size",
         "zfsmgmt:excludes",
         "zfsmgmt:overrides",
         "zfsmgmt:ssh_config"
@@ -1309,6 +1364,7 @@ RSpec.describe ZfsMgmt do
       # First system_com: initial send of oldest snapshot (snap1)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", '"tank/sub/fs@snap1"', "|",
+        "mbuffer", "-q", "|",
         "zfs", "recv", "-s", "\"#{dest}\""
       ]).ordered.and_return(status_ok)
 
@@ -1324,6 +1380,7 @@ RSpec.describe ZfsMgmt do
 
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-I", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         "zfs", "recv", "-s", "\"#{dest}\""
       ]).ordered.and_return(status_ok)
 
@@ -1359,6 +1416,7 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-t", "1-abc-token", "|",
+        "mbuffer", "-q", "|",
         "zfs", "recv", "-s", "\"#{dest}\""
       ]).and_return(status_ok)
 
@@ -1389,6 +1447,7 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", '"tank/sub/fs@snap1"', "|",
+        "mbuffer", "-q", "|",
         "zfs", "recv", "-s", "-d", "\"#{recv_target}\""
       ]).ordered.and_return(status_ok)
 
@@ -1403,6 +1462,7 @@ RSpec.describe ZfsMgmt do
 
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         "zfs", "recv", "-s", "-d", "\"#{recv_target}\""
       ]).ordered.and_return(status_ok)
 
@@ -1478,8 +1538,9 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-c", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         "ssh", "-o", "BatchMode=yes", "cli@host",
-        "'zfs recv -s -u -x mountpoint -o readonly=on \"#{dest}\"'"
+        "'mbuffer -q | zfs recv -s -u -x mountpoint -o readonly=on \"#{dest}\"'"
       ]).and_return(status_ok)
 
       ZfsMgmt.zfs_send(opts, zfs, props, snaps)
@@ -1522,6 +1583,7 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         "zfs", "recv", "-s",
         "-x", "sharesmb", "-x", "mountpoint", "-x", "quota",
         "-o", "readonly=on", "-o", "compression=zstd",
@@ -1554,8 +1616,9 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         "ssh", "-o", "BatchMode=yes", "zfs_recv@drhost",
-        "'zfs recv -s \"#{dest}\"'"
+        "'mbuffer -q | zfs recv -s \"#{dest}\"'"
       ]).and_return(status_ok)
 
       ZfsMgmt.zfs_send({}, zfs, props, snaps)
@@ -1578,8 +1641,9 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", '"tank/sub/fs@snap1"', "|",
+        "mbuffer", "-q", "|",
         "ssh", "-o", "BatchMode=yes", "drhost",
-        "'zfs recv -s -d \"#{recv_target}\"'"
+        "'mbuffer -q | zfs recv -s -d \"#{recv_target}\"'"
       ]).ordered.and_return(status_ok)
 
       expect(ZfsMgmt).to receive(:zfsget).with(
@@ -1593,8 +1657,9 @@ RSpec.describe ZfsMgmt do
 
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         "ssh", "-o", "BatchMode=yes", "drhost",
-        "'zfs recv -s -d \"#{recv_target}\"'"
+        "'mbuffer -q | zfs recv -s -d \"#{recv_target}\"'"
       ]).ordered.and_return(status_ok)
 
       ZfsMgmt.zfs_send({}, zfs, props, snaps)
@@ -1660,13 +1725,15 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         "zfs", "recv", "-s", "\"#{local_dest}\""
       ]).ordered.and_return(status_ok)
 
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         "ssh", "-o", "BatchMode=yes", "zfs_recv@drhost",
-        "'zfs recv -s \"#{remote_dest}\"'"
+        "'mbuffer -q | zfs recv -s \"#{remote_dest}\"'"
       ]).ordered.and_return(status_ok)
 
       ZfsMgmt.zfs_send({}, zfs, props, snaps)
@@ -1711,6 +1778,7 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         "zfs", "recv", "-s", "\"#{local_dest}\""
       ]).and_return(status_ok)
 
@@ -1748,6 +1816,7 @@ RSpec.describe ZfsMgmt do
       status_fail = instance_double(Process::Status, success?: false, exitstatus: 1)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         "zfs", "recv", "-s", "-d", "\"#{recv_local}\""
       ]).ordered.and_return(status_fail)
 
@@ -1766,8 +1835,9 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         "ssh", "-o", "BatchMode=yes", "drhost",
-        "'zfs recv -s -d \"#{recv_remote}\"'"
+        "'mbuffer -q | zfs recv -s -d \"#{recv_remote}\"'"
       ]).ordered.and_return(status_ok)
 
       ZfsMgmt.zfs_send({}, zfs, props, snaps)
@@ -1847,11 +1917,68 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
         *expected_ssh,
-        "'zfs recv -s \"#{dest}\"'"
+        "'mbuffer -q | zfs recv -s \"#{dest}\"'"
       ]).and_return(status_ok)
 
       ZfsMgmt.zfs_send({}, zfs, { "zfsmgmt:ssh_config" => "ServerAliveInterval=60" }, snaps)
+    end
+
+    it "applies mbuffer and mbuffer_size precedence (CLI > per-zfs > top-level > ZFS props > default) in .zfs_send" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "mbuffer" => false,
+        "mbuffer_size" => "256M",
+        "zfs" => {
+          "tank/sub" => {
+            "destination" => "drhost:backup/dest",
+            "mbuffer" => true,
+            "mbuffer_size" => "1G"
+          }
+        }
+      )
+
+      dest = "backup/dest/sub/fs"
+      expected_ssh = ["ssh", "-o", "BatchMode=yes", "drhost"]
+
+      allow(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: expected_ssh).and_return({ dest => {} })
+      allow(ZfsMgmt).to receive(:zfsget).with(
+        zfs: dest,
+        types: ["snapshot"],
+        command_prefix: expected_ssh,
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      # Per-dataset config (mbuffer: true, mbuffer_size: 1G) overrides top-level (mbuffer: false, mbuffer_size: 256M)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "-m", "1G", "|",
+        *expected_ssh,
+        "'mbuffer -q -m 1G | zfs recv -s \"#{dest}\"'"
+      ]).ordered.and_return(status_ok)
+      ZfsMgmt.zfs_send({}, zfs, { "zfsmgmt:mbuffer" => "false", "zfsmgmt:mbuffer_size" => "64M" }, snaps)
+
+      # CLI --no-mbuffer overrides per-dataset mbuffer = true
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        *expected_ssh,
+        "'zfs recv -s \"#{dest}\"'"
+      ]).ordered.and_return(status_ok)
+      ZfsMgmt.zfs_send({ mbuffer: false }, zfs, {}, snaps)
+
+      # When config omits mbuffer, ZFS user property zfsmgmt:mbuffer=false disables mbuffer
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "zfs" => { "tank/sub" => { "destination" => "drhost:backup/dest" } }
+      )
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        *expected_ssh,
+        "'zfs recv -s \"#{dest}\"'"
+      ]).ordered.and_return(status_ok)
+      ZfsMgmt.zfs_send({}, zfs, { "zfsmgmt:mbuffer" => "false" }, snaps)
     end
 
     it "omits BatchMode when knocked out via BatchMode=** in zfsmgmt:ssh_config or config" do

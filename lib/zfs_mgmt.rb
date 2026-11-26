@@ -320,7 +320,15 @@ module ZfsMgmt
     base = props || {}
     return base unless config && zfs_name && !zfs_name.empty?
 
-    merged = base.merge(config.zfs_props_for(zfs_name))
+    top_defaults = {}
+    unless config.mbuffer.nil?
+      top_defaults['zfsmgmt:mbuffer'] = config.mbuffer ? 'true' : 'false'
+    end
+    if config.mbuffer_size && !config.mbuffer_size.to_s.empty?
+      top_defaults['zfsmgmt:mbuffer_size'] = config.mbuffer_size
+    end
+
+    merged = base.merge(top_defaults).merge(config.zfs_props_for(zfs_name))
     excludes = merge_excludes(base['zfsmgmt:excludes'], config.excludes, *config.zfs_excludes_layers_for(zfs_name), strip_knockouts: true)
     overrides = merge_overrides(base['zfsmgmt:overrides'], config.overrides, *config.zfs_overrides_layers_for(zfs_name), strip_knockouts: true)
     ssh_config = merge_ssh_config(base['zfsmgmt:ssh_config'], config.ssh_config, *config.zfs_ssh_config_layers_for(zfs_name), strip_knockouts: false)
@@ -361,6 +369,8 @@ module ZfsMgmt
       'remote',
       'destination',
       'recv_state',
+      'mbuffer',
+      'mbuffer_size',
       'excludes',
       'overrides',
       'ssh_config',
@@ -783,7 +793,7 @@ module ZfsMgmt
                           source,
                          )
       e = zfs_send_estimate(com) if options[:verbose] == 'pv'
-      com += mbuffer_command(options) if options[:mbuffer]
+      com += mbuffer_command(options, zfs_obj) if mbuffer_enabled?(options, zfs_obj)
       com += pv_command(options,e) if options[:verbose] == 'pv'
       com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
  
@@ -800,7 +810,7 @@ module ZfsMgmt
       com.push('-v','-P') if key_comp?(options, 'verbose', 'send')
       com.push('|')
       e = zfs_send_estimate(com) if options[:verbose] == 'pv'
-      com += mbuffer_command(options) if options[:mbuffer]
+      com += mbuffer_command(options, zfs_obj) if mbuffer_enabled?(options, zfs_obj)
       com += pv_command(options,e) if options[:verbose] == 'pv'
 
       com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
@@ -846,7 +856,7 @@ module ZfsMgmt
 
         com += zfs_send_com(options,zfs_obj,[i_opt, dq('@' + rsnap.split('@')[1])], sorted[-1])
         e = zfs_send_estimate(com) if options[:verbose] == 'pv'
-        com += mbuffer_command(options) if options[:mbuffer]
+        com += mbuffer_command(options, zfs_obj) if mbuffer_enabled?(options, zfs_obj)
         com += pv_command(options,e) if options[:verbose] == 'pv'
         com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
 
@@ -859,10 +869,56 @@ module ZfsMgmt
     $logger.error("receiving filesystem has no snapshots that still exists on the sending side, it must be destroyed: #{destination_path}")
     
   end
-  def self.mbuffer_command(options)
-    mbuffer_command = [ ZfsMgmt.global_options[:mbuffer_binary] ]
-    mbuffer_command.push('-q') unless options[:verbose] == 'mbuffer'
-    mbuffer_command.push('-m',options[:mbuffer_size]) if options[:mbuffer_size]
+  def self.mbuffer_enabled?(options, props = nil)
+    opts = options || {}
+    ['mbuffer', :mbuffer].each do |k|
+      return opts[k] if key_comp?(opts, k, [true, false])
+    end
+    if props.is_a?(ZfsMgmt::Zfs)
+      return props.mbuffer if props.config_merged?
+      if config
+        cfg_props = config.zfs_props_for(props.name)
+        return !prop_off?(cfg_props['zfsmgmt:mbuffer']) if cfg_props.key?('zfsmgmt:mbuffer')
+        return config.mbuffer unless config.mbuffer.nil?
+      end
+      return props.mbuffer
+    end
+    if config && !config.mbuffer.nil?
+      return config.mbuffer
+    end
+    return false if props.is_a?(Hash) && key_comp?(props, 'zfsmgmt:mbuffer', method(:prop_off?))
+    true
+  end
+
+  def self.resolve_mbuffer_size(options, props = nil)
+    opts = options || {}
+    ['mbuffer_size', :mbuffer_size].each do |k|
+      val = opts[k]
+      return val if val && !val.to_s.empty?
+    end
+    if props.is_a?(ZfsMgmt::Zfs)
+      return props.mbuffer_size if props.config_merged?
+      if config
+        cfg_props = config.zfs_props_for(props.name)
+        return cfg_props['zfsmgmt:mbuffer_size'] if cfg_props.key?('zfsmgmt:mbuffer_size') && !cfg_props['zfsmgmt:mbuffer_size'].to_s.empty?
+        return config.mbuffer_size if config.mbuffer_size && !config.mbuffer_size.to_s.empty?
+      end
+      return props.mbuffer_size
+    end
+    if config && config.mbuffer_size && !config.mbuffer_size.to_s.empty?
+      return config.mbuffer_size
+    end
+    return props['zfsmgmt:mbuffer_size'] if props.is_a?(Hash) && props['zfsmgmt:mbuffer_size'] && !props['zfsmgmt:mbuffer_size'].to_s.empty?
+    nil
+  end
+
+  def self.mbuffer_command(options, props = nil)
+    opts = options || {}
+    mbuffer_bin = (ZfsMgmt.global_options && (ZfsMgmt.global_options[:mbuffer_binary] || ZfsMgmt.global_options['mbuffer_binary'])) || 'mbuffer'
+    mbuffer_command = [ mbuffer_bin ]
+    mbuffer_command.push('-q') unless opts[:verbose] == 'mbuffer'
+    size = resolve_mbuffer_size(opts, props)
+    mbuffer_command.push('-m', size) if size && !size.to_s.empty?
     mbuffer_command.push('|')
     mbuffer_command
   end
@@ -961,8 +1017,8 @@ module ZfsMgmt
 
     prefix = command_prefix.nil? ? recv_command_prefix(options, zfs_obj, target, warn_deprecated: warn_deprecated) : command_prefix
     unless prefix.empty?
-      if options[:mbuffer]
-        zfs_recv_com = mbuffer_command(options) + zfs_recv_com
+      if mbuffer_enabled?(options, zfs_obj)
+        zfs_recv_com = mbuffer_command(options, zfs_obj) + zfs_recv_com
       end
       zfs_recv_com = prefix + [ sq(zfs_recv_com.join(' ')) ]
     end
