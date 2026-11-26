@@ -162,8 +162,7 @@ snapshot = true
 
 [zfs."tank/data"]
 send = true
-remote = "zfs_recv@backup.example.com"
-destination = "backup/tank"
+destination = "zfs_recv@backup.example.com:backup/tank"
 excludes = ["quota"]
 
 [zfs."tank/data".overrides]
@@ -278,14 +277,22 @@ or `'local'`:
 - `local`: enables `zfs send` only when the property's ZFS source is
   `local` (not inherited or received).
 
-### zfsmgmt:remote
-Remote SSH target for `zfs recv` and remote `zfs get` checks (e.g.
-`user@host`). When omitted, `zfs recv` runs locally.
+### zfsmgmt:remote *(deprecated)*
+Deprecated. Remote SSH target for `zfs recv` and remote `zfs get` checks
+(e.g. `user@host`). Specify the remote host directly in `zfsmgmt:destination`
+instead (e.g. `user@host:backup/tank`). When set, logs a deprecation warning
+and prepends the remote host to `destination` only if `destination` does not
+already include a `hostname:` or `user@hostname:` prefix.
 
 ### zfsmgmt:destination
 Base destination ZFS dataset path for `zfs send`/`recv` (required for
 `zfsmgr send all`, even if `--destination` is passed on the command
-line):
+line). Supports local and remote forms:
+- `zpool/zfs/zfs2` (local)
+- `hostname:zpool/zfs/zfs2` (remote via SSH)
+- `user@hostname:zpool/zfs/zfs2` (remote via SSH with user)
+
+Path resolution rules:
 - When the property's ZFS source is `local`, the destination path
   resolves to `<destination>/<dataset basename>`.
 - When the property's ZFS source is `inherited from <ancestor>`, the

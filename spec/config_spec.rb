@@ -133,7 +133,9 @@ RSpec.describe ZfsMgmt::Config do
         child = cfg.zfs["pool/zfs/zfs2"]
         expect(child).to be_a(ZfsMgmt::Zfs)
         expect(child.send_enabled).to eq(true)
-        expect(child.destination).to eq("otherpool/zfs2")
+        expect(child.destination).to eq("root@host:otherpool/zfs2")
+        expect(child.destination_remote).to eq("root@host")
+        expect(child.destination_path).to eq("otherpool/zfs2")
         expect(child.remote).to eq("root@host")
         expect(child.send_compressed).to eq(true)
       end
@@ -225,6 +227,43 @@ RSpec.describe ZfsMgmt::Config do
       expect(bad_per_zfs_ovr.errors[:zfs].join).to include("pool/ds: overrides.canmount: property and value must be strings")
     end
 
+    it "supports host:path and user@host:path in destination and warns on deprecated remote" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "10-dest.toml"), <<~TOML)
+          [zfs."pool/a"]
+          destination = "backuphost:tank/dest"
+
+          [zfs."pool/b"]
+          destination = "zfs_recv@backuphost:tank/dest"
+
+          [zfs."pool/c"]
+          remote = "old@host"
+          destination = "tank/dest"
+
+          [zfs."pool/d"]
+          remote = "old@host"
+          destination = "new@host:tank/dest"
+        TOML
+
+        expect($logger).to receive(:warn).with(/remote option is deprecated \(pool\/c\)/)
+        expect($logger).to receive(:warn).with(/remote option is deprecated \(pool\/d\)/)
+
+        cfg = described_class.load_dir(dir)
+        expect(cfg).to be_valid
+
+        expect(cfg.zfs["pool/a"].destination).to eq("backuphost:tank/dest/a")
+        expect(cfg.zfs["pool/a"].destination_remote).to eq("backuphost")
+        expect(cfg.zfs["pool/a"].destination_path).to eq("tank/dest/a")
+
+        expect(cfg.zfs["pool/b"].destination).to eq("zfs_recv@backuphost:tank/dest/b")
+        expect(cfg.zfs["pool/b"].destination_remote).to eq("zfs_recv@backuphost")
+        expect(cfg.zfs["pool/b"].destination_path).to eq("tank/dest/b")
+
+        expect(cfg.zfs["pool/c"].destination).to eq("old@host:tank/dest/c")
+        expect(cfg.zfs["pool/d"].destination).to eq("new@host:tank/dest/d")
+      end
+    end
+
     it "raises ConfigError and logs an error on invalid TOML syntax" do
       Dir.mktmpdir do |dir|
         bad_path = File.join(dir, "00-broken.toml")
@@ -298,7 +337,9 @@ RSpec.describe ZfsMgmt::Config do
       expect(grandchild_props["zfsmgmt:destination@source"]).to eq("inherited from pool")
 
       grandchild = ZfsMgmt::Zfs.from_zfs_props("pool/a/b", grandchild_props)
-      expect(grandchild.destination).to eq("backup/dest/pool/a/b")
+      expect(grandchild.destination).to eq("root@drhost:backup/dest/pool/a/b")
+      expect(grandchild.destination_path).to eq("backup/dest/pool/a/b")
+      expect(grandchild.destination_remote).to eq("root@drhost")
       expect(grandchild.manage).to eq(true)
       expect(grandchild.send_enabled).to eq(true)
     end
@@ -405,6 +446,9 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg.zfs["tank"].policy).to eq("10y6m4w30d24h")
       expect(cfg.zfs["tank/data"].send_enabled).to eq(true)
       expect(cfg.zfs["tank/data"].manage).to eq(true)
+      expect(cfg.zfs["tank/data"].destination).to eq("zfs_recv@backup.example.com:backup/tank/data")
+      expect(cfg.zfs["tank/data"].destination_remote).to eq("zfs_recv@backup.example.com")
+      expect(cfg.zfs["tank/data"].destination_path).to eq("backup/tank/data")
       expect(cfg.zfs["tank/data"].excludes).to eq(["quota"])
       expect(cfg.zfs["tank/data"].overrides).to eq({ "canmount" => "**", "compression" => "zstd" })
       expect(cfg.zfs["tank/data"].override_options).to eq(["compression=zstd"])

@@ -439,6 +439,22 @@ RSpec.describe ZfsMgmt do
       ])
     end
 
+    it "extracts ssh remote from target or destination and strips host prefix from recv target" do
+      com = ZfsMgmt.zfs_recv_com({}, [], {}, "zfs_recv@backuphost:backup/pool/fs")
+      expect(com).to eq([
+        "ssh",
+        "zfs_recv@backuphost",
+        "'zfs recv -s \"backup/pool/fs\"'"
+      ])
+
+      host_only = ZfsMgmt.zfs_recv_com({}, [], {}, "backuphost:backup/pool/fs")
+      expect(host_only).to eq([
+        "ssh",
+        "backuphost",
+        "'zfs recv -s \"backup/pool/fs\"'"
+      ])
+    end
+
     it "omits volume-unsupported properties from -x and -o when receiving a volume" do
       opts = Thor::CoreExt::HashWithIndifferentAccess.new(
         exclude: %w[mountpoint canmount quota sharenfs],
@@ -894,7 +910,7 @@ RSpec.describe ZfsMgmt do
       expect(child.policy).to eq("30d")
       expect(child.send_enabled).to eq(true)
       expect(child.remote).to eq("root@config-remote")
-      expect(child.destination).to eq("configpool/tank/child")
+      expect(child.destination).to eq("root@config-remote:configpool/tank/child")
       # ZFS user properties not specified in config are preserved
       expect(child.minage).to eq("2h")
     end
@@ -1374,6 +1390,117 @@ RSpec.describe ZfsMgmt do
       ]).and_return(status_ok)
 
       ZfsMgmt.zfs_send(opts, zfs, props, snaps)
+    end
+
+    it "supports hostname:path and user@hostname:path destinations in .zfs_send without remote option" do
+      props = {
+        "zfsmgmt:destination" => "zfs_recv@drhost:backup/pool",
+        "zfsmgmt:destination@source" => "local"
+      }
+      dest = "backup/pool/fs"
+
+      expect($logger).not_to receive(:warn).with(/remote option is deprecated/)
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: ["ssh", "zfs_recv@drhost"]).and_return({
+        dest => {}
+      })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: dest,
+        types: ["snapshot"],
+        command_prefix: ["ssh", "zfs_recv@drhost"],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "ssh", "zfs_recv@drhost",
+        "'zfs recv -s \"#{dest}\"'"
+      ]).and_return(status_ok)
+
+      ZfsMgmt.zfs_send({}, zfs, props, snaps)
+    end
+
+    it "supports [user@]host:destination with discard_first and CLI destination overrides" do
+      props = {
+        "zfsmgmt:destination" => "drhost:backup/dest",
+        "zfsmgmt:destination@source" => "inherited from tank",
+        "zfsmgmt:recv_discard_first" => "true",
+        "zfsmgmt:remote" => "ignored@oldhost"
+      }
+      check_dest = "other/dest/sub/fs"
+      recv_target = "other/dest"
+      opts = Thor::CoreExt::HashWithIndifferentAccess.new(destination: "cli@newhost:other/dest")
+
+      expect($logger).to receive(:warn).with(/remote option is deprecated/)
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: check_dest, command_prefix: ["ssh", "cli@newhost"])
+        .and_raise(ZfsMgmt::ZfsDatasetNotFoundError.new("dataset does not exist: #{check_dest}"))
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", '"tank/sub/fs@snap1"', "|",
+        "ssh", "cli@newhost",
+        "'zfs recv -s -d \"#{recv_target}\"'"
+      ]).ordered.and_return(status_ok)
+
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: check_dest,
+        types: ["snapshot"],
+        command_prefix: ["ssh", "cli@newhost"],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{check_dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "ssh", "cli@newhost",
+        "'zfs recv -s -d \"#{recv_target}\"'"
+      ]).ordered.and_return(status_ok)
+
+      ZfsMgmt.zfs_send(opts, zfs, props, snaps)
+    end
+
+    it "does not let deprecated remote override an explicit host in destination" do
+      props = {
+        "zfsmgmt:destination" => "explicit@host:backup/pool",
+        "zfsmgmt:destination@source" => "local",
+        "zfsmgmt:remote" => "deprecated@host"
+      }
+      opts = Thor::CoreExt::HashWithIndifferentAccess.new(remote: "cli@host")
+      dest = "backup/pool/fs"
+
+      expect($logger).to receive(:warn).with(/remote option is deprecated/).at_least(:once)
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: ["ssh", "explicit@host"]).and_return({
+        dest => {}
+      })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: dest,
+        types: ["snapshot"],
+        command_prefix: ["ssh", "explicit@host"],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{dest}@snap2" => { "creation" => 2000, "userrefs" => 0 }
+      })
+
+      ZfsMgmt.zfs_send(opts, zfs, props, snaps)
+    end
+  end
+
+  describe ".parse_destination and .format_destination" do
+    it "parses local, hostname:path, and user@hostname:path destinations" do
+      expect(ZfsMgmt.parse_destination(nil)).to eq([nil, nil])
+      expect(ZfsMgmt.parse_destination("zpool/zfs/zfs2/etc")).to eq([nil, "zpool/zfs/zfs2/etc"])
+      expect(ZfsMgmt.parse_destination("hostname:zpool/zfs/zfs2/etc")).to eq(["hostname", "zpool/zfs/zfs2/etc"])
+      expect(ZfsMgmt.parse_destination("user@hostname:zpool/zfs/zfs2/etc")).to eq(["user@hostname", "zpool/zfs/zfs2/etc"])
+    end
+
+    it "formats destinations with optional remote prefix" do
+      expect(ZfsMgmt.format_destination(nil, "zpool/ds")).to eq("zpool/ds")
+      expect(ZfsMgmt.format_destination("", "zpool/ds")).to eq("zpool/ds")
+      expect(ZfsMgmt.format_destination("host", "zpool/ds")).to eq("host:zpool/ds")
+      expect(ZfsMgmt.format_destination("user@host", "zpool/ds")).to eq("user@host:zpool/ds")
     end
   end
 

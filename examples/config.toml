@@ -68,8 +68,7 @@ snap_timestamp = "%FT%T%z"
 # Child dataset: inherits tank's snapshot policy, configures zfs send/recv
 [zfs."tank/data"]
 send = true                     # true, false, or "local" (only send this dataset)
-remote = "zfs_recv@backup.example.com"
-destination = "backup/tank"
+destination = "zfs_recv@backup.example.com:backup/tank"
 
 # zfs send flags
 send_intermediary = true        # -I
