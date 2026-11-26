@@ -19,6 +19,13 @@
         "type": "string"
       }
     },
+    "ssh_config": {
+      "type": "object",
+      "description": "SSH options passed via -o option=value (merged with BatchMode=yes default)",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
     "zfs": {
       "type": "object",
       "description": "Per-dataset ZFS configuration keyed by dataset name",
@@ -224,6 +231,13 @@
           "overrides": {
             "type": "object",
             "description": "ZFS property overrides to set on zfs recv (-o property=value)",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "ssh_config": {
+            "type": "object",
+            "description": "SSH options passed via -o option=value (merged with BatchMode=yes default and top-level ssh_config)",
             "additionalProperties": {
               "type": "string"
             }
