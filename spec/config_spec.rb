@@ -10,14 +10,16 @@ RSpec.describe ZfsMgmt::Config do
       expect(schema["type"]).to eq("object")
 
       props = schema["properties"]
-      expect(props.keys).to include("excludes", "overrides", "zfs")
+      expect(props.keys).to include("excludes", "overrides", "ssh_config", "zfs")
       expect(props["excludes"]["type"]).to eq("array")
       expect(props["excludes"]["items"]).to eq({ "type" => "string" })
       expect(props["overrides"]["type"]).to eq("object")
       expect(props["overrides"]["additionalProperties"]).to eq({ "type" => "string" })
+      expect(props["ssh_config"]["type"]).to eq("object")
+      expect(props["ssh_config"]["additionalProperties"]).to eq({ "type" => "string" })
       expect(props["zfs"]["type"]).to eq("object")
       expect(props["zfs"]["additionalProperties"]["type"]).to eq("object")
-      expect(props["zfs"]["additionalProperties"]["properties"].keys).to include("send", "destination", "remote", "excludes", "overrides")
+      expect(props["zfs"]["additionalProperties"]["properties"].keys).to include("send", "destination", "remote", "excludes", "overrides", "ssh_config")
     end
 
     it "applies sensible defaults and validates valid configs" do
@@ -26,10 +28,11 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg.excludes).to eq([])
       expect(cfg.overrides).to eq({})
       expect(cfg.override_options).to eq([])
+      expect(cfg.ssh_config).to eq({})
       expect(cfg.zfs).to eq({})
     end
 
-    it "rejects invalid overrides values, non-Hash overrides, and invalid excludes" do
+    it "rejects invalid overrides, ssh_config, and excludes values" do
       non_hash = described_class.from_hash("overrides" => ["canmount=noauto"])
       expect(non_hash).not_to be_valid
       expect(non_hash.errors[:overrides]).not_to be_empty
@@ -37,6 +40,14 @@ RSpec.describe ZfsMgmt::Config do
       bad_val = described_class.from_hash("overrides" => { "canmount" => 123 })
       expect(bad_val).not_to be_valid
       expect(bad_val.errors[:overrides]).not_to be_empty
+
+      arr_ssh = described_class.from_hash("ssh_config" => [{ "BatchMode" => "no" }])
+      expect(arr_ssh).not_to be_valid
+      expect(arr_ssh.errors[:ssh_config].join).to include("[ssh_config]")
+
+      bad_ssh_val = described_class.from_hash("ssh_config" => { "ConnectTimeout" => 10 })
+      expect(bad_ssh_val).not_to be_valid
+      expect(bad_ssh_val.errors[:ssh_config]).not_to be_empty
 
       bad_excl = described_class.from_hash("excludes" => "mountpoint")
       expect(bad_excl).not_to be_valid
@@ -461,6 +472,60 @@ RSpec.describe ZfsMgmt::Config do
       })
       expect(props["zfsmgmt:overrides@source"]).to eq("inherited from pool/child")
     end
+
+    it "loads, inherits, and validates top-level [ssh_config] and [zfs.\"dataset\".ssh_config]" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "10-ssh.toml"), <<~TOML)
+          [ssh_config]
+          Compression = "on"
+          ServerAliveInterval = "60"
+
+          [zfs."pool/zfs"]
+          [zfs."pool/zfs".ssh_config]
+          ConnectTimeout = "15"
+
+          [zfs."pool/zfs/zfs2"]
+          [zfs."pool/zfs/zfs2".ssh_config]
+          BatchMode = "no"
+          Compression = "yes"
+        TOML
+
+        cfg = described_class.load_dir(dir)
+        expect(cfg).to be_valid
+        expect(cfg.ssh_config).to eq({
+          "Compression" => "on",
+          "ServerAliveInterval" => "60"
+        })
+        expect(cfg.zfs["pool/zfs"].ssh_config).to eq({ "ConnectTimeout" => "15" })
+        expect(cfg.zfs["pool/zfs/zfs2"].ssh_config).to eq({
+          "ConnectTimeout" => "15",
+          "BatchMode" => "no",
+          "Compression" => "yes"
+        })
+        expect(cfg.zfs_ssh_config_layers_for("pool/zfs/zfs2/sub")).to eq([
+          { "ConnectTimeout" => "15" },
+          { "BatchMode" => "no", "Compression" => "yes" }
+        ])
+      end
+
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "10-bad-ssh.toml"), <<~TOML)
+          [zfs."pool/zfs/zfs2"]
+          [[zfs."pool/zfs/zfs2".ssh_config]]
+          BatchMode = "no"
+        TOML
+
+        expect($logger).to receive(:error).with(/invalid configuration.*pool\/zfs\/zfs2.*ssh_config must be a table/)
+        expect { described_class.load_dir(dir) }.to raise_error(
+          ZfsMgmt::ConfigError,
+          /invalid configuration.*pool\/zfs\/zfs2.*ssh_config must be a table/
+        )
+      end
+
+      bad_per_zfs_ssh = described_class.from_hash("zfs" => { "pool/ds" => { "ssh_config" => { "ConnectTimeout" => 10 } } })
+      expect(bad_per_zfs_ssh).not_to be_valid
+      expect(bad_per_zfs_ssh.errors[:zfs].join).to include("pool/ds: ssh_config.ConnectTimeout: property and value must be strings")
+    end
   end
 
   describe "examples/config.toml" do
@@ -473,6 +538,7 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg.excludes).to eq(%w[mountpoint sharenfs sharesmb])
       expect(cfg.overrides).to eq({ "canmount" => "noauto", "readonly" => "on" })
       expect(cfg.override_options).to eq(["canmount=noauto", "readonly=on"])
+      expect(cfg.ssh_config).to eq({ "Compression" => "yes" })
       expect(cfg.zfs.keys).to match_array(%w[tank tank/data tank/archive])
       expect(cfg.zfs["tank"].policy).to eq("10y6m4w30d24h")
       expect(cfg.zfs["tank/data"].send_enabled).to eq(true)
@@ -483,6 +549,7 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg.zfs["tank/data"].excludes).to eq(["quota"])
       expect(cfg.zfs["tank/data"].overrides).to eq({ "canmount" => "**", "compression" => "zstd" })
       expect(cfg.zfs["tank/data"].override_options).to eq(["compression=zstd"])
+      expect(cfg.zfs["tank/data"].ssh_config).to eq({ "ConnectTimeout" => "30" })
       expect(cfg.zfs["tank/archive"].destinations).to eq([
         "backup/archive/archive",
         "zfs_recv@offsite.example.com:offsite/archive/archive"

@@ -43,6 +43,7 @@ RSpec.describe ZfsMgmt::Zfs do
         "recv_force",
         "excludes",
         "overrides",
+        "ssh_config",
         "restic_backup",
         "restic_repository"
       )
@@ -53,6 +54,8 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(props["excludes"]["items"]).to eq({ "type" => "string" })
       expect(props["overrides"]["type"]).to eq("object")
       expect(props["overrides"]["additionalProperties"]).to eq({ "type" => "string" })
+      expect(props["ssh_config"]["type"]).to eq("object")
+      expect(props["ssh_config"]["additionalProperties"]).to eq({ "type" => "string" })
     end
 
     it "applies sensible defaults and validates correctly" do
@@ -71,6 +74,7 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(zfs.excludes).to eq([])
       expect(zfs.overrides).to eq({})
       expect(zfs.override_options).to eq([])
+      expect(zfs.ssh_config).to eq({})
       expect(zfs.restic_backup).to eq(false)
     end
 
@@ -115,6 +119,21 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(described_class.new(name: "tank/data", destination: ["backup/tank", "host:offsite/tank"])).to be_valid
       expect(described_class.new(name: "tank/data", destination: 123)).not_to be_valid
       expect(described_class.new(name: "tank/data", destination: [123])).not_to be_valid
+    end
+
+    it "validates ssh_config types without validating ssh option names or values" do
+      arr_ssh = described_class.new(name: "tank/data", ssh_config: [{ "BatchMode" => "no" }])
+      expect(arr_ssh).not_to be_valid
+      expect(arr_ssh.errors[:ssh_config].join).to include('[zfs."tank/data".ssh_config]')
+
+      expect(described_class.new(name: "tank/data", ssh_config: "BatchMode=no")).not_to be_valid
+      expect(described_class.new(name: "tank/data", ssh_config: { "ConnectTimeout" => 30 })).not_to be_valid
+
+      valid_ssh = described_class.new(
+        name: "tank/data",
+        ssh_config: { "BatchMode" => "no", "ArbitraryOption" => "anything" }
+      )
+      expect(valid_ssh).to be_valid
     end
   end
 
@@ -443,11 +462,12 @@ RSpec.describe ZfsMgmt::Zfs do
       props["zfsmgmt:minage"] = "1h"
       props["zfsmgmt:excludes"] = "mountpoint,sharenfs"
       props["zfsmgmt:overrides"] = "canmount=noauto,readonly=on"
+      props["zfsmgmt:ssh_config"] = "BatchMode=no,Compression=yes"
 
       described_class.from_zfs_props("tank/app", props)
     end
 
-    context "excludes and overrides parsing" do
+    context "excludes, overrides, and ssh_config parsing" do
       it "parses comma-separated zfsmgmt:excludes and zfsmgmt:overrides" do
         zfs = described_class.from_zfs_props("tank/app", {
           "zfsmgmt:excludes" => " mountpoint , sharenfs , **quota ",
@@ -471,6 +491,19 @@ RSpec.describe ZfsMgmt::Zfs do
         expect(zfs.overrides).to eq({
           "**" => "**",
           "compression" => "zstd"
+        })
+      end
+
+      it "parses comma-separated zfsmgmt:ssh_config including ** knockouts and warns on malformed entries" do
+        expect($logger).to receive(:warn).with("ignoring malformed ssh_config 'bogus' on tank/app")
+        zfs = described_class.from_zfs_props("tank/app", {
+          "zfsmgmt:ssh_config" => " BatchMode=no , Compression=yes , bogus , ServerAliveInterval=** , **IPQoS "
+        })
+        expect(zfs.ssh_config).to eq({
+          "BatchMode" => "no",
+          "Compression" => "yes",
+          "ServerAliveInterval" => "**",
+          "IPQoS" => "**"
         })
       end
     end

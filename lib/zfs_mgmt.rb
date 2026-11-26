@@ -102,7 +102,9 @@ module ZfsMgmt
     end
   end
 
-  def self.parse_override_entry(entry, context: nil)
+  DEFAULT_SSH_CONFIG = { 'BatchMode' => 'yes' }.freeze
+
+  def self.parse_kv_entry(entry, context: nil, label: 'override')
     str = entry.to_s.strip
     return nil if str.empty?
     return [KNOCKOUT_PREFIX, KNOCKOUT_PREFIX] if str == KNOCKOUT_PREFIX
@@ -113,7 +115,7 @@ module ZfsMgmt
       v = v.strip
       if k.empty?
         target = context ? " on #{context}" : ''
-        $logger&.warn("ignoring malformed override '#{str}'#{target}")
+        $logger&.warn("ignoring malformed #{label} '#{str}'#{target}")
         return nil
       end
       return [k, v]
@@ -126,11 +128,11 @@ module ZfsMgmt
     end
 
     target = context ? " on #{context}" : ''
-    $logger&.warn("ignoring malformed override '#{str}'#{target}")
+    $logger&.warn("ignoring malformed #{label} '#{str}'#{target}")
     nil
   end
 
-  def self.parse_overrides(value, context: nil)
+  def self.parse_kv_map(value, context: nil, label: 'override')
     case value
     when nil
       {}
@@ -144,7 +146,7 @@ module ZfsMgmt
     when String
       result = {}
       value.split(',').each do |part|
-        parsed = parse_override_entry(part, context: context)
+        parsed = parse_kv_entry(part, context: context, label: label)
         next unless parsed
 
         result[parsed[0]] = parsed[1]
@@ -153,7 +155,7 @@ module ZfsMgmt
     when Array
       result = {}
       value.each do |entry|
-        parsed = parse_override_entry(entry, context: context)
+        parsed = parse_kv_entry(entry, context: context, label: label)
         next unless parsed
 
         result[parsed[0]] = parsed[1]
@@ -162,6 +164,18 @@ module ZfsMgmt
     else
       {}
     end
+  end
+
+  def self.parse_override_entry(entry, context: nil)
+    parse_kv_entry(entry, context: context, label: 'override')
+  end
+
+  def self.parse_overrides(value, context: nil)
+    parse_kv_map(value, context: context, label: 'override')
+  end
+
+  def self.parse_ssh_config(value, context: nil)
+    parse_kv_map(value, context: context, label: 'ssh_config')
   end
 
   def self.merge_excludes(*layers, strip_knockouts: true)
@@ -214,6 +228,28 @@ module ZfsMgmt
     result
   end
 
+  def self.merge_ssh_config(*layers, strip_knockouts: true)
+    result = {}
+    layers.each do |layer|
+      next if layer.nil?
+
+      parse_ssh_config(layer).each do |k, v|
+        if k == KNOCKOUT_PREFIX
+          result.clear
+          result[KNOCKOUT_PREFIX] = KNOCKOUT_PREFIX unless strip_knockouts
+        else
+          result.delete_if { |existing_k, _| existing_k.downcase == k.downcase }
+          if v == KNOCKOUT_PREFIX
+            result[k] = KNOCKOUT_PREFIX unless strip_knockouts
+          else
+            result[k] = v
+          end
+        end
+      end
+    end
+    result
+  end
+
   def self.resolve_excludes(zfs_obj, cli_exclude = nil)
     layers = [zfs_obj.excludes]
     if config && !zfs_obj.config_merged?
@@ -232,6 +268,31 @@ module ZfsMgmt
     end
     layers << cli_option unless cli_option.nil?
     merge_overrides(*layers, strip_knockouts: true)
+  end
+
+  def self.resolve_ssh_config(zfs_obj, extra_ssh_config = nil)
+    layers = [DEFAULT_SSH_CONFIG, zfs_obj.ssh_config]
+    if config && !zfs_obj.config_merged?
+      layers << config.ssh_config
+      layers.concat(config.zfs_ssh_config_layers_for(zfs_obj.name))
+    end
+    layers << extra_ssh_config unless extra_ssh_config.nil?
+    merge_ssh_config(*layers, strip_knockouts: true)
+  end
+
+  def self.ssh_command_prefix(remote, ssh_config = DEFAULT_SSH_CONFIG)
+    return [] if remote.nil? || remote.to_s.empty?
+
+    com = ['ssh']
+    opts = ssh_config.nil? ? DEFAULT_SSH_CONFIG : ssh_config
+    opts.each do |k, v|
+      next if v == KNOCKOUT_PREFIX
+
+      opt_str = "#{k}=#{v}"
+      com.push('-o', opt_str =~ /\s/ ? dq(opt_str) : opt_str)
+    end
+    com.push(remote)
+    com
   end
 
   def self.build_zfs_from_props(zfs_name, props)
@@ -262,6 +323,7 @@ module ZfsMgmt
     merged = base.merge(config.zfs_props_for(zfs_name))
     excludes = merge_excludes(base['zfsmgmt:excludes'], config.excludes, *config.zfs_excludes_layers_for(zfs_name), strip_knockouts: true)
     overrides = merge_overrides(base['zfsmgmt:overrides'], config.overrides, *config.zfs_overrides_layers_for(zfs_name), strip_knockouts: true)
+    ssh_config = merge_ssh_config(base['zfsmgmt:ssh_config'], config.ssh_config, *config.zfs_ssh_config_layers_for(zfs_name), strip_knockouts: false)
     if excludes.empty?
       merged.delete('zfsmgmt:excludes')
     else
@@ -271,6 +333,11 @@ module ZfsMgmt
       merged.delete('zfsmgmt:overrides')
     else
       merged['zfsmgmt:overrides'] = overrides
+    end
+    if ssh_config.empty?
+      merged.delete('zfsmgmt:ssh_config')
+    else
+      merged['zfsmgmt:ssh_config'] = ssh_config
     end
     merged
   end
@@ -296,6 +363,7 @@ module ZfsMgmt
       'recv_state',
       'excludes',
       'overrides',
+      'ssh_config',
     ].map do |p|
       ['zfsmgmt',p].join(':')
     end
@@ -676,7 +744,7 @@ module ZfsMgmt
     end
     entry_remote = entry[:explicit_remote] || opt_remote || zfs_obj.remote
     entry_remote = nil if entry_remote.respond_to?(:empty?) && entry_remote.empty?
-    cmd_prefix = entry_remote ? ['ssh', entry_remote] : []
+    cmd_prefix = entry_remote ? ssh_command_prefix(entry_remote, resolve_ssh_config(zfs_obj)) : []
     state_destination = format_destination(entry_remote, destination_path)
 
     # does the destination zfs already exist?
@@ -932,7 +1000,10 @@ module ZfsMgmt
   end
   def self.recv_command_prefix(options, props, target = nil, warn_deprecated: true)
     remote = effective_remote(options, props, target, warn_deprecated: warn_deprecated)
-    remote && !remote.empty? ? [ 'ssh', remote ] : []
+    return [] unless remote && !remote.empty?
+
+    zfs_obj = props.is_a?(ZfsMgmt::Zfs) ? props : ZfsMgmt::Zfs.from_zfs_props('', props || {})
+    ssh_command_prefix(remote, resolve_ssh_config(zfs_obj))
   end
   def self.zfs_send_estimate(com)
     lcom = com.dup

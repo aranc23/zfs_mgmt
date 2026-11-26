@@ -465,6 +465,7 @@ RSpec.describe ZfsMgmt do
       com = ZfsMgmt.zfs_recv_com(opts, ["-o", "canmount=noauto"], {}, "backup/pool/fs")
       expect(com).to eq([
         "ssh",
+        "-o", "BatchMode=yes",
         "backup@remotehost",
         "'mbuffer -q -m 512M | zfs recv -s -n -h -u -d -F -v -x mountpoint -x sharenfs -o readonly=on -o canmount=noauto \"backup/pool/fs\"'"
       ])
@@ -479,6 +480,7 @@ RSpec.describe ZfsMgmt do
       com = ZfsMgmt.zfs_recv_com({}, [], props, "backup/pool/fs")
       expect(com).to eq([
         "ssh",
+        "-o", "BatchMode=yes",
         "root@drhost",
         "'zfs recv -s -u -F \"backup/pool/fs\"'"
       ])
@@ -488,6 +490,7 @@ RSpec.describe ZfsMgmt do
       com = ZfsMgmt.zfs_recv_com({}, [], {}, "zfs_recv@backuphost:backup/pool/fs")
       expect(com).to eq([
         "ssh",
+        "-o", "BatchMode=yes",
         "zfs_recv@backuphost",
         "'zfs recv -s \"backup/pool/fs\"'"
       ])
@@ -495,8 +498,34 @@ RSpec.describe ZfsMgmt do
       host_only = ZfsMgmt.zfs_recv_com({}, [], {}, "backuphost:backup/pool/fs")
       expect(host_only).to eq([
         "ssh",
+        "-o", "BatchMode=yes",
         "backuphost",
         "'zfs recv -s \"backup/pool/fs\"'"
+      ])
+    end
+
+    it "passes merged ssh_config options on remote zfs_recv_com and allows overriding BatchMode" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "ssh_config" => { "Compression" => "on", "ConnectTimeout" => "10" },
+        "zfs" => {
+          "tank/data" => {
+            "ssh_config" => { "BatchMode" => "no", "Compression" => "yes" }
+          }
+        }
+      )
+
+      zfs_obj = ZfsMgmt.build_zfs_from_props("tank/data", {
+        "zfsmgmt:ssh_config" => "ServerAliveInterval=30,Compression=no"
+      })
+      com = ZfsMgmt.zfs_recv_com({}, [], zfs_obj, "drhost:backup/tank/data")
+      expect(com).to eq([
+        "ssh",
+        "-o", "ServerAliveInterval=30",
+        "-o", "ConnectTimeout=10",
+        "-o", "BatchMode=no",
+        "-o", "Compression=yes",
+        "drhost",
+        "'zfs recv -s \"backup/tank/data\"'"
       ])
     end
 
@@ -681,6 +710,70 @@ RSpec.describe ZfsMgmt do
     end
   end
 
+  describe ".parse_ssh_config, .merge_ssh_config, .resolve_ssh_config, and .ssh_command_prefix" do
+    it "merges ssh_config case-insensitively with BatchMode=yes default and supports ** knockouts" do
+      merged = ZfsMgmt.merge_ssh_config(
+        ZfsMgmt::DEFAULT_SSH_CONFIG,
+        "Compression=on,batchmode=no",
+        { "Compression" => "yes", "ConnectTimeout" => "15" }
+      )
+      expect(merged).to eq({
+        "batchmode" => "no",
+        "Compression" => "yes",
+        "ConnectTimeout" => "15"
+      })
+
+      knocked_out = ZfsMgmt.merge_ssh_config(
+        ZfsMgmt::DEFAULT_SSH_CONFIG,
+        { "BatchMode" => "**", "Compression" => "yes" }
+      )
+      expect(knocked_out).to eq({ "Compression" => "yes" })
+
+      cleared = ZfsMgmt.merge_ssh_config(
+        ZfsMgmt::DEFAULT_SSH_CONFIG,
+        ["**", "UserKnownHostsFile=/dev/null"]
+      )
+      expect(cleared).to eq({ "UserKnownHostsFile" => "/dev/null" })
+    end
+
+    it "resolves ssh_config across DEFAULT_SSH_CONFIG, ZFS prop, top-level config, and per-dataset config" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "ssh_config" => { "Compression" => "on", "ServerAliveInterval" => "60" },
+        "zfs" => {
+          "tank" => { "ssh_config" => { "ConnectTimeout" => "20" } },
+          "tank/data" => { "ssh_config" => { "BatchMode" => "no", "Compression" => "yes" } }
+        }
+      )
+
+      zfs_obj = ZfsMgmt.build_zfs_from_props("tank/data/sub", {
+        "zfsmgmt:ssh_config" => "BatchMode=yes,ConnectTimeout=5,Ciphers=aes256-gcm@openssh.com"
+      })
+
+      expect(ZfsMgmt.resolve_ssh_config(zfs_obj)).to eq({
+        "BatchMode" => "no",
+        "ConnectTimeout" => "20",
+        "Ciphers" => "aes256-gcm@openssh.com",
+        "Compression" => "yes",
+        "ServerAliveInterval" => "60"
+      })
+    end
+
+    it "builds ssh_command_prefix with -o option=value and quotes options containing spaces" do
+      expect(ZfsMgmt.ssh_command_prefix(nil)).to eq([])
+      expect(ZfsMgmt.ssh_command_prefix("")).to eq([])
+      expect(ZfsMgmt.ssh_command_prefix("drhost")).to eq(["ssh", "-o", "BatchMode=yes", "drhost"])
+      expect(ZfsMgmt.ssh_command_prefix("user@drhost", {
+        "BatchMode" => "no",
+        "ProxyCommand" => "ssh -W %h:%p bastion"
+      })).to eq([
+        "ssh",
+        "-o", "BatchMode=no",
+        "-o", '"ProxyCommand=ssh -W %h:%p bastion"',
+        "user@drhost"
+      ])
+    end
+  end
+
   describe ".custom_properties" do
     it "returns all expected zfsmgmt:* property names" do
       props = ZfsMgmt.custom_properties
@@ -700,7 +793,8 @@ RSpec.describe ZfsMgmt do
         "zfsmgmt:destination",
         "zfsmgmt:recv_state",
         "zfsmgmt:excludes",
-        "zfsmgmt:overrides"
+        "zfsmgmt:overrides",
+        "zfsmgmt:ssh_config"
       )
       expect(props.all? { |p| p.start_with?("zfsmgmt:") }).to be(true)
     end
@@ -1369,13 +1463,13 @@ RSpec.describe ZfsMgmt do
       )
       dest = "config/dest/fs"
 
-      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: ["ssh", "cli@host"]).and_return({
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: ["ssh", "-o", "BatchMode=yes", "cli@host"]).and_return({
         dest => {}
       })
       expect(ZfsMgmt).to receive(:zfsget).with(
         zfs: dest,
         types: ["snapshot"],
-        command_prefix: ["ssh", "cli@host"],
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "cli@host"],
         properties: ["creation", "userrefs"]
       ).and_return({
         "#{dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
@@ -1384,7 +1478,7 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-c", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
-        "ssh", "cli@host",
+        "ssh", "-o", "BatchMode=yes", "cli@host",
         "'zfs recv -s -u -x mountpoint -o readonly=on \"#{dest}\"'"
       ]).and_return(status_ok)
 
@@ -1445,13 +1539,13 @@ RSpec.describe ZfsMgmt do
       dest = "backup/pool/fs"
 
       expect($logger).not_to receive(:warn).with(/remote option is deprecated/)
-      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: ["ssh", "zfs_recv@drhost"]).and_return({
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: ["ssh", "-o", "BatchMode=yes", "zfs_recv@drhost"]).and_return({
         dest => {}
       })
       expect(ZfsMgmt).to receive(:zfsget).with(
         zfs: dest,
         types: ["snapshot"],
-        command_prefix: ["ssh", "zfs_recv@drhost"],
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "zfs_recv@drhost"],
         properties: ["creation", "userrefs"]
       ).and_return({
         "#{dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
@@ -1460,7 +1554,7 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
-        "ssh", "zfs_recv@drhost",
+        "ssh", "-o", "BatchMode=yes", "zfs_recv@drhost",
         "'zfs recv -s \"#{dest}\"'"
       ]).and_return(status_ok)
 
@@ -1478,20 +1572,20 @@ RSpec.describe ZfsMgmt do
       recv_target = "backup/dest"
 
       expect($logger).to receive(:warn).with(/remote option is deprecated/)
-      expect(ZfsMgmt).to receive(:zfsget).with(zfs: check_dest, command_prefix: ["ssh", "drhost"])
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: check_dest, command_prefix: ["ssh", "-o", "BatchMode=yes", "drhost"])
         .and_raise(ZfsMgmt::ZfsDatasetNotFoundError.new("dataset does not exist: #{check_dest}"))
 
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", '"tank/sub/fs@snap1"', "|",
-        "ssh", "drhost",
+        "ssh", "-o", "BatchMode=yes", "drhost",
         "'zfs recv -s -d \"#{recv_target}\"'"
       ]).ordered.and_return(status_ok)
 
       expect(ZfsMgmt).to receive(:zfsget).with(
         zfs: check_dest,
         types: ["snapshot"],
-        command_prefix: ["ssh", "drhost"],
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "drhost"],
         properties: ["creation", "userrefs"]
       ).and_return({
         "#{check_dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
@@ -1499,7 +1593,7 @@ RSpec.describe ZfsMgmt do
 
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
-        "ssh", "drhost",
+        "ssh", "-o", "BatchMode=yes", "drhost",
         "'zfs recv -s -d \"#{recv_target}\"'"
       ]).ordered.and_return(status_ok)
 
@@ -1516,13 +1610,13 @@ RSpec.describe ZfsMgmt do
       dest = "backup/pool/fs"
 
       expect($logger).to receive(:warn).with(/remote option is deprecated/).at_least(:once)
-      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: ["ssh", "explicit@host"]).and_return({
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: ["ssh", "-o", "BatchMode=yes", "explicit@host"]).and_return({
         dest => {}
       })
       expect(ZfsMgmt).to receive(:zfsget).with(
         zfs: dest,
         types: ["snapshot"],
-        command_prefix: ["ssh", "explicit@host"],
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "explicit@host"],
         properties: ["creation", "userrefs"]
       ).and_return({
         "#{dest}@snap2" => { "creation" => 2000, "userrefs" => 0 }
@@ -1551,13 +1645,13 @@ RSpec.describe ZfsMgmt do
         "#{local_dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
       })
 
-      expect(ZfsMgmt).to receive(:zfsget).with(zfs: remote_dest, command_prefix: ["ssh", "zfs_recv@drhost"]).and_return({
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: remote_dest, command_prefix: ["ssh", "-o", "BatchMode=yes", "zfs_recv@drhost"]).and_return({
         remote_dest => {}
       })
       expect(ZfsMgmt).to receive(:zfsget).with(
         zfs: remote_dest,
         types: ["snapshot"],
-        command_prefix: ["ssh", "zfs_recv@drhost"],
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "zfs_recv@drhost"],
         properties: ["creation", "userrefs"]
       ).and_return({
         "#{remote_dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
@@ -1571,7 +1665,7 @@ RSpec.describe ZfsMgmt do
 
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
-        "ssh", "zfs_recv@drhost",
+        "ssh", "-o", "BatchMode=yes", "zfs_recv@drhost",
         "'zfs recv -s \"#{remote_dest}\"'"
       ]).ordered.and_return(status_ok)
 
@@ -1598,7 +1692,7 @@ RSpec.describe ZfsMgmt do
       remote_dest = "offsite/dest/sub/fs"
       local_dest = "backup/dest/sub/fs"
 
-      expect(ZfsMgmt).to receive(:zfsget).with(zfs: remote_dest, command_prefix: ["ssh", "drhost"])
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: remote_dest, command_prefix: ["ssh", "-o", "BatchMode=yes", "drhost"])
         .and_raise(ZfsMgmt::ZfsGetError.new("ssh failed"))
       expect($logger).to receive(:error).with("unable to check remote filesystem #{remote_dest}")
 
@@ -1657,13 +1751,13 @@ RSpec.describe ZfsMgmt do
         "zfs", "recv", "-s", "-d", "\"#{recv_local}\""
       ]).ordered.and_return(status_fail)
 
-      expect(ZfsMgmt).to receive(:zfsget).with(zfs: check_remote, command_prefix: ["ssh", "drhost"]).and_return({
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: check_remote, command_prefix: ["ssh", "-o", "BatchMode=yes", "drhost"]).and_return({
         check_remote => {}
       })
       expect(ZfsMgmt).to receive(:zfsget).with(
         zfs: check_remote,
         types: ["snapshot"],
-        command_prefix: ["ssh", "drhost"],
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "drhost"],
         properties: ["creation", "userrefs"]
       ).and_return({
         "#{check_remote}@snap1" => { "creation" => 1000, "userrefs" => 0 }
@@ -1672,7 +1766,7 @@ RSpec.describe ZfsMgmt do
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
-        "ssh", "drhost",
+        "ssh", "-o", "BatchMode=yes", "drhost",
         "'zfs recv -s -d \"#{recv_remote}\"'"
       ]).ordered.and_return(status_ok)
 
@@ -1692,31 +1786,98 @@ RSpec.describe ZfsMgmt do
 
       expect($logger).to receive(:warn).with(/remote option is deprecated \(CLI --remote\)/).once
 
-      expect(ZfsMgmt).to receive(:zfsget).with(zfs: "backup/pool/fs", command_prefix: ["ssh", "cli@host"]).and_return({
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: "backup/pool/fs", command_prefix: ["ssh", "-o", "BatchMode=yes", "cli@host"]).and_return({
         "backup/pool/fs" => {}
       })
       expect(ZfsMgmt).to receive(:zfsget).with(
         zfs: "backup/pool/fs",
         types: ["snapshot"],
-        command_prefix: ["ssh", "cli@host"],
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "cli@host"],
         properties: ["creation", "userrefs"]
       ).and_return({
         "backup/pool/fs@snap2" => { "creation" => 2000, "userrefs" => 0 }
       })
 
-      expect(ZfsMgmt).to receive(:zfsget).with(zfs: "offsite/pool/fs", command_prefix: ["ssh", "explicit@host"]).and_return({
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: "offsite/pool/fs", command_prefix: ["ssh", "-o", "BatchMode=yes", "explicit@host"]).and_return({
         "offsite/pool/fs" => {}
       })
       expect(ZfsMgmt).to receive(:zfsget).with(
         zfs: "offsite/pool/fs",
         types: ["snapshot"],
-        command_prefix: ["ssh", "explicit@host"],
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "explicit@host"],
         properties: ["creation", "userrefs"]
       ).and_return({
         "offsite/pool/fs@snap2" => { "creation" => 2000, "userrefs" => 0 }
       })
 
       ZfsMgmt.zfs_send(opts, zfs, props, snaps)
+    end
+
+    it "passes merged ssh_config options to both zfsget and zfs recv ssh invocations and honors ** knockouts" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "ssh_config" => { "Compression" => "on", "ConnectTimeout" => "10" },
+        "zfs" => {
+          "tank/sub" => {
+            "destination" => "drhost:backup/dest",
+            "ssh_config" => { "BatchMode" => "no", "Compression" => "yes" }
+          }
+        }
+      )
+
+      dest = "backup/dest/sub/fs"
+      expected_ssh = [
+        "ssh",
+        "-o", "ServerAliveInterval=60",
+        "-o", "ConnectTimeout=10",
+        "-o", "BatchMode=no",
+        "-o", "Compression=yes",
+        "drhost"
+      ]
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: expected_ssh).and_return({ dest => {} })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: dest,
+        types: ["snapshot"],
+        command_prefix: expected_ssh,
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        *expected_ssh,
+        "'zfs recv -s \"#{dest}\"'"
+      ]).and_return(status_ok)
+
+      ZfsMgmt.zfs_send({}, zfs, { "zfsmgmt:ssh_config" => "ServerAliveInterval=60" }, snaps)
+    end
+
+    it "omits BatchMode when knocked out via BatchMode=** in zfsmgmt:ssh_config or config" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "zfs" => {
+          "tank/sub/fs" => {
+            "destination" => "drhost:backup/dest",
+            "ssh_config" => { "BatchMode" => "**", "ConnectTimeout" => "15" }
+          }
+        }
+      )
+
+      dest = "backup/dest/fs"
+      expected_ssh = ["ssh", "-o", "ConnectTimeout=15", "drhost"]
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: expected_ssh).and_return({ dest => {} })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: dest,
+        types: ["snapshot"],
+        command_prefix: expected_ssh,
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{dest}@snap2" => { "creation" => 2000, "userrefs" => 0 }
+      })
+
+      ZfsMgmt.zfs_send({}, zfs, {}, snaps)
     end
   end
 

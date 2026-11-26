@@ -144,7 +144,7 @@ Precedence is: **CLI options > per-dataset config (child > parent) > top-level c
 
 ### Format
 
-At the top level, `excludes` and `[overrides]` set default `zfs recv` `-x` and `-o` options. Per-dataset options are configured under `[zfs."pool/dataset"]` using single-bracket TOML tables (not double-bracket `[[zfs."pool/dataset"]]` array-of-tables syntax). Per-dataset `excludes` and `[zfs."pool/dataset".overrides]` are also supported using single-bracket tables. Dataset names containing `/` (or other characters not allowed in TOML bare keys) must be quoted:
+At the top level, `excludes`, `[overrides]`, and `[ssh_config]` set default `zfs recv` `-x`/`-o` options and `ssh` `-o` options (`ssh_config` defaults to `BatchMode = "yes"`). Per-dataset options are configured under `[zfs."pool/dataset"]` using single-bracket TOML tables (not double-bracket `[[zfs."pool/dataset"]]` array-of-tables syntax). Per-dataset `excludes`, `[zfs."pool/dataset".overrides]`, and `[zfs."pool/dataset".ssh_config]` are also supported using single-bracket tables. Dataset names containing `/` (or other characters not allowed in TOML bare keys) must be quoted:
 
 ```toml
 #:schema https://raw.githubusercontent.com/aranc23/zfs_mgmt/master/schema/config.schema.json
@@ -154,6 +154,9 @@ excludes = ["mountpoint", "sharenfs"]
 [overrides]
 canmount = "noauto"
 readonly = "on"
+
+[ssh_config]
+Compression = "yes"
 
 [zfs."tank"]
 manage = true
@@ -168,16 +171,19 @@ excludes = ["quota"]
 [zfs."tank/data".overrides]
 canmount = "**"
 compression = "zstd"
+
+[zfs."tank/data".ssh_config]
+ConnectTimeout = "30"
 ```
 
 Dataset options configured in TOML inherit to child datasets (e.g. `tank` -> `tank/data`) with the same source semantics as `zfsmgmt:*` user properties.
 
 `destination` in `[zfs."pool/dataset"]` accepts either a single string or an array of strings (for example `destination = ["backup/tank", "zfs_recv@offsite.example.com:offsite/tank"]`) to send a dataset to multiple destinations.
 
-Unlike scalar options (where a higher-precedence source replaces lower ones), `excludes` and `overrides` are **merged** from lowest precedence (`zfsmgmt:excludes` / `zfsmgmt:overrides`) up through top-level config, per-dataset config (ancestor to child), and CLI `--exclude` / `--option` flags. To unset a value set at a lower precedence level, use the `**` knockout prefix:
-- In `overrides`: set `prop = "**"` in TOML (or `prop=**` / `**prop` on the CLI or `zfsmgmt:overrides`) to remove `prop` from lower levels, or `"**"` alone to clear all lower-level overrides.
+Unlike scalar options (where a higher-precedence source replaces lower ones), `excludes`, `overrides`, and `ssh_config` are **merged** from lowest precedence (`zfsmgmt:excludes` / `zfsmgmt:overrides` / `zfsmgmt:ssh_config`, with `ssh_config` prefilled with `BatchMode = "yes"`) up through top-level config, per-dataset config (ancestor to child), and CLI `--exclude` / `--option` flags (for `excludes`/`overrides`). To unset a value set at a lower precedence level, use the `**` knockout prefix:
+- In `overrides` / `ssh_config`: set `prop = "**"` in TOML (or `prop=**` / `**prop` in `zfsmgmt:*` or CLI `--option`) to remove `prop` from lower levels, or `"**"` alone to clear all lower-level options.
 - In `excludes`: include `"**prop"` to remove `prop` from lower levels, or `"**"` to clear all lower-level excludes.
-- A higher-precedence layer can re-add an exclude or override that was knocked out at an intermediate layer.
+- A higher-precedence layer can re-add an option that was knocked out at an intermediate layer.
 
 See [examples/config.toml](examples/config.toml) for a full example and [schema/config.schema.json](schema/config.schema.json) for the JSON Schema (used by TOML editors/validators via the `#:schema` directive; regenerate with `bundle exec rake schema`).
 
@@ -355,6 +361,16 @@ Comma-separated list of `property=value` overrides to pass to `zfs recv`
 config, per-dataset config, and CLI `--option` (`-o`) options. Use
 `property=**` (or `**property`) to knock out an override, or `**` to
 clear lower-precedence overrides.
+
+### zfsmgmt:ssh_config
+Comma-separated list of `option=value` SSH configuration options passed to
+`ssh` via `-o option=value`, for example `BatchMode=no,Compression=yes`.
+By default `ssh_config` is prefilled with `BatchMode=yes` to avoid
+interactive password prompts. Merged (with case-insensitive option names)
+from the `BatchMode=yes` default through `zfsmgmt:ssh_config`, top-level
+`[ssh_config]`, and per-dataset `[zfs."<dataset>".ssh_config]`. Use
+`option=**` (or `**option`) to knock out an option, or `**` to clear
+lower-precedence options.
 
 ### zfsmgmt:restic_backup
 boolean, send this zfs to restic

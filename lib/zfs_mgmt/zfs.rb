@@ -58,7 +58,7 @@ module ZfsMgmt
         snapshot snap_prefix snap_timestamp
         send remote destination send_replicate
         recv_state
-        excludes overrides
+        excludes overrides ssh_config
         restic_backup restic_repository
       ] +
       SEND_BOOL_PROPS.map(&:to_s) +
@@ -148,6 +148,8 @@ module ZfsMgmt
                description: 'ZFS properties to exclude on zfs recv (-x)'
       property :overrides, T::Hash[String, String], optional: true,
                description: 'ZFS property overrides to set on zfs recv (-o property=value)'
+      property :ssh_config, T::Hash[String, String], optional: true,
+               description: 'SSH options passed via -o option=value (merged with BatchMode=yes default and top-level ssh_config)'
 
       # Restic backup properties
       property :restic_backup, T::Boolean, optional: true, default: false,
@@ -159,6 +161,7 @@ module ZfsMgmt
     validate :validate_destination
     validate :validate_excludes
     validate :validate_overrides
+    validate :validate_ssh_config
 
     def initialize(attributes = {})
       attrs = attributes.transform_keys(&:to_sym)
@@ -224,6 +227,13 @@ module ZfsMgmt
         end
       else
         attrs[:overrides] = {}
+      end
+      if attrs.key?(:ssh_config)
+        if attrs[:ssh_config].is_a?(Hash)
+          attrs[:ssh_config] = attrs[:ssh_config].each_with_object({}) { |(k, v), h| h[k.to_s] = v }
+        end
+      else
+        attrs[:ssh_config] = {}
       end
       super(attrs)
     end
@@ -450,6 +460,11 @@ module ZfsMgmt
         attrs[:overrides] = ZfsMgmt.parse_overrides(props['zfsmgmt:overrides'], context: ctx)
       end
 
+      if props.key?('zfsmgmt:ssh_config')
+        ctx = (name.nil? || name.empty?) ? nil : name
+        attrs[:ssh_config] = ZfsMgmt.parse_ssh_config(props['zfsmgmt:ssh_config'], context: ctx)
+      end
+
       attrs[:restic_backup] = ZfsMgmt.prop_on?(props['zfsmgmt:restic_backup']) if props.key?('zfsmgmt:restic_backup')
       attrs[:restic_repository] = props['zfsmgmt:restic_repository'] if props.key?('zfsmgmt:restic_repository')
 
@@ -476,21 +491,29 @@ module ZfsMgmt
     end
 
     def validate_overrides
-      return if overrides.nil?
+      validate_string_hash(:overrides, overrides, 'hash of property=value pairs')
+    end
 
-      if overrides.is_a?(Array)
-        errors.add(:overrides, "must be a hash of property=value pairs (use [zfs.\"#{name}\".overrides], not [[zfs.\"#{name}\".overrides]])")
+    def validate_ssh_config
+      validate_string_hash(:ssh_config, ssh_config, 'hash of option=value pairs')
+    end
+
+    def validate_string_hash(attr, value, expected_desc)
+      return if value.nil?
+
+      if value.is_a?(Array)
+        errors.add(attr, "must be a #{expected_desc} (use [zfs.\"#{name}\".#{attr}], not [[zfs.\"#{name}\".#{attr}]])")
         return
       end
 
-      unless overrides.is_a?(Hash)
-        errors.add(:overrides, 'must be a hash of property=value pairs')
+      unless value.is_a?(Hash)
+        errors.add(attr, "must be a #{expected_desc}")
         return
       end
 
-      overrides.each do |k, v|
+      value.each do |k, v|
         unless k.is_a?(String) && v.is_a?(String)
-          errors.add(:overrides, "#{k}: property and value must be strings")
+          errors.add(attr, "#{k}: property and value must be strings")
         end
       end
     end

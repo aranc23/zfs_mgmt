@@ -45,6 +45,12 @@ excludes = [
 canmount = "noauto"
 readonly = "on"
 
+# SSH options passed as -o option=value on all ssh invocations.
+# Prefilled with BatchMode = "yes" by default to prevent password prompts;
+# override here, per-dataset, or via zfsmgmt:ssh_config.
+[ssh_config]
+Compression = "yes"
+
 # ---------------------------------------------------------------------------
 # Per-dataset options (mirroring zfsmgmt:* user properties)
 # Each dataset is configured as a standard TOML table: [zfs."pool/dataset"]
@@ -94,6 +100,10 @@ excludes = ["quota"]            # merged with top-level excludes and zfsmgmt:exc
 [zfs."tank/data".overrides]
 canmount = "**"                 # knock out top-level canmount = "noauto"
 compression = "zstd"
+
+# Per-dataset SSH options (merged with BatchMode=yes default, top-level [ssh_config], and zfsmgmt:ssh_config)
+[zfs."tank/data".ssh_config]
+ConnectTimeout = "30"
 
 # Child dataset with local overrides, multiple send destinations, and restic backup settings
 [zfs."tank/archive"]

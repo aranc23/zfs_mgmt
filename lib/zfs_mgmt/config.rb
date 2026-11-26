@@ -11,7 +11,7 @@ module ZfsMgmt
   class Config
     include EasyTalk::Model
 
-    TOP_LEVEL_KEYS = %w[excludes overrides zfs].freeze
+    TOP_LEVEL_KEYS = %w[excludes overrides ssh_config zfs].freeze
     JSON_SCHEMA_DRAFT = 'http://json-schema.org/draft-07/schema#'
     JSON_SCHEMA_URL = 'https://raw.githubusercontent.com/aranc23/zfs_mgmt/master/schema/config.schema.json'
 
@@ -23,12 +23,15 @@ module ZfsMgmt
                description: 'ZFS properties to exclude on zfs recv (-x)'
       property :overrides, T::Hash[String, String], optional: true,
                description: 'ZFS property overrides to set on zfs recv (-o property=value)'
+      property :ssh_config, T::Hash[String, String], optional: true,
+               description: 'SSH options passed via -o option=value (merged with BatchMode=yes default)'
       property :zfs, T::Hash[String, ZfsMgmt::Zfs], optional: true,
                description: 'Per-dataset ZFS configuration keyed by dataset name'
     end
 
     validate :validate_excludes
     validate :validate_overrides
+    validate :validate_ssh_config
     validate :validate_zfs_entries
 
     def initialize(attributes = {})
@@ -52,6 +55,17 @@ module ZfsMgmt
                                   end
       else
         super_attrs[:overrides] = {}
+      end
+
+      if raw_attrs.key?('ssh_config')
+        raw_ssh_config = raw_attrs['ssh_config']
+        super_attrs[:ssh_config] = if raw_ssh_config.is_a?(Hash)
+                                     raw_ssh_config.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
+                                   else
+                                     raw_ssh_config
+                                   end
+      else
+        super_attrs[:ssh_config] = {}
       end
 
       if raw_attrs.key?('zfs')
@@ -89,17 +103,11 @@ module ZfsMgmt
     end
 
     def zfs_overrides_layers_for(dataset_name)
-      layers = []
-      dataset_ancestors(dataset_name).each do |ancestor|
-        raw_entry = @raw_zfs[ancestor]
-        next unless raw_entry && raw_entry.key?('overrides')
+      zfs_hash_layers_for(dataset_name, 'overrides')
+    end
 
-        val = raw_entry['overrides']
-        if val.is_a?(Hash) && val.all? { |k, v| k.is_a?(String) && v.is_a?(String) }
-          layers << val
-        end
-      end
-      layers
+    def zfs_ssh_config_layers_for(dataset_name)
+      zfs_hash_layers_for(dataset_name, 'ssh_config')
     end
 
     def zfs_props_for(dataset_name)
@@ -111,6 +119,8 @@ module ZfsMgmt
       excludes_source = nil
       overrides_layers = []
       overrides_source = nil
+      ssh_config_layers = []
+      ssh_config_source = nil
 
       ancestors.each do |ancestor|
         raw_entry = @raw_zfs[ancestor]
@@ -138,6 +148,14 @@ module ZfsMgmt
             if v.is_a?(Hash) && v.all? { |ok, ov| ok.is_a?(String) && ov.is_a?(String) }
               overrides_layers << v
               overrides_source = source
+            end
+            next
+          end
+
+          if k == 'ssh_config'
+            if v.is_a?(Hash) && v.all? { |sk, sv| sk.is_a?(String) && sv.is_a?(String) }
+              ssh_config_layers << v
+              ssh_config_source = source
             end
             next
           end
@@ -182,6 +200,11 @@ module ZfsMgmt
       unless overrides_layers.empty?
         result['zfsmgmt:overrides'] = ZfsMgmt.merge_overrides(*overrides_layers, strip_knockouts: false)
         result['zfsmgmt:overrides@source'] = overrides_source
+      end
+
+      unless ssh_config_layers.empty?
+        result['zfsmgmt:ssh_config'] = ZfsMgmt.merge_ssh_config(*ssh_config_layers, strip_knockouts: false)
+        result['zfsmgmt:ssh_config@source'] = ssh_config_source
       end
 
       result
@@ -273,6 +296,20 @@ module ZfsMgmt
 
     private
 
+    def zfs_hash_layers_for(dataset_name, key)
+      layers = []
+      dataset_ancestors(dataset_name).each do |ancestor|
+        raw_entry = @raw_zfs[ancestor]
+        next unless raw_entry && raw_entry.key?(key)
+
+        val = raw_entry[key]
+        if val.is_a?(Hash) && val.all? { |k, v| k.is_a?(String) && v.is_a?(String) }
+          layers << val
+        end
+      end
+      layers
+    end
+
     def dataset_ancestors(dataset_name)
       return [] if dataset_name.nil? || dataset_name.empty? || @raw_zfs.empty?
 
@@ -312,7 +349,7 @@ module ZfsMgmt
           $logger&.warn("unknown config property '#{k_str}' on #{ds_name}")
           next
         end
-        if k_str == 'overrides' && v.is_a?(Hash)
+        if (k_str == 'overrides' || k_str == 'ssh_config') && v.is_a?(Hash)
           filtered[k_str] = v.each_with_object({}) { |(ok, ov), oh| oh[ok.to_s] = ov }
         else
           filtered[k_str] = v
@@ -339,14 +376,27 @@ module ZfsMgmt
     end
 
     def validate_overrides
-      unless overrides.is_a?(Hash)
-        errors.add(:overrides, 'must be a hash of property=value pairs')
+      validate_top_level_hash(:overrides, overrides, 'hash of property=value pairs')
+    end
+
+    def validate_ssh_config
+      validate_top_level_hash(:ssh_config, ssh_config, 'hash of option=value pairs', table_hint: 'use [ssh_config], not [[ssh_config]]')
+    end
+
+    def validate_top_level_hash(attr, value, expected_desc, table_hint: nil)
+      if value.is_a?(Array) && table_hint
+        errors.add(attr, "must be a #{expected_desc} (#{table_hint})")
         return
       end
 
-      overrides.each do |k, v|
+      unless value.is_a?(Hash)
+        errors.add(attr, "must be a #{expected_desc}")
+        return
+      end
+
+      value.each do |k, v|
         unless k.is_a?(String) && v.is_a?(String)
-          errors.add(:overrides, "#{k}: property and value must be strings")
+          errors.add(attr, "#{k}: property and value must be strings")
         end
       end
     end
@@ -382,22 +432,28 @@ module ZfsMgmt
             end
           end
           if raw_entry.key?('overrides')
-            raw_ovr = raw_entry['overrides']
-            if raw_ovr.is_a?(Array)
-              errors.add(:zfs, "#{dataset_name}: overrides must be a table of property=value pairs (use [zfs.\"#{dataset_name}\".overrides], not [[zfs.\"#{dataset_name}\".overrides]])")
-            elsif !raw_ovr.is_a?(Hash)
-              errors.add(:zfs, "#{dataset_name}: overrides must be a hash of property=value pairs")
-            else
-              raw_ovr.each do |k, v|
-                unless k.is_a?(String) && v.is_a?(String)
-                  errors.add(:zfs, "#{dataset_name}: overrides.#{k}: property and value must be strings")
-                end
-              end
-            end
+            validate_per_zfs_hash(dataset_name, 'overrides', raw_entry['overrides'], 'table of property=value pairs', 'hash of property=value pairs')
+          end
+          if raw_entry.key?('ssh_config')
+            validate_per_zfs_hash(dataset_name, 'ssh_config', raw_entry['ssh_config'], 'table of option=value pairs', 'hash of option=value pairs')
           end
         end
         unless zfs_obj.valid?
           errors.add(:zfs, "#{dataset_name}: #{zfs_obj.errors.full_messages.join(', ')}")
+        end
+      end
+    end
+
+    def validate_per_zfs_hash(dataset_name, key, raw_val, table_desc, hash_desc)
+      if raw_val.is_a?(Array)
+        errors.add(:zfs, "#{dataset_name}: #{key} must be a #{table_desc} (use [zfs.\"#{dataset_name}\".#{key}], not [[zfs.\"#{dataset_name}\".#{key}]])")
+      elsif !raw_val.is_a?(Hash)
+        errors.add(:zfs, "#{dataset_name}: #{key} must be a #{hash_desc}")
+      else
+        raw_val.each do |k, v|
+          unless k.is_a?(String) && v.is_a?(String)
+            errors.add(:zfs, "#{dataset_name}: #{key}.#{k}: property and value must be strings")
+          end
         end
       end
     end
