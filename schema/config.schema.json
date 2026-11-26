@@ -126,8 +126,18 @@
             "description": "DEPRECATED: Remote SSH target for zfs recv (specify remote in destination instead, e.g. user@host:pool/dataset)"
           },
           "destination": {
-            "type": "string",
-            "description": "Destination ZFS dataset path for zfs send/recv, optionally prefixed with [user@]host: (e.g. backup/tank or user@host:backup/tank)"
+            "description": "Destination ZFS dataset path(s) for zfs send/recv, optionally prefixed with [user@]host: (e.g. backup/tank, user@host:backup/tank, or an array of destinations)",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
           },
           "send_intermediary": {
             "type": "boolean",

@@ -56,11 +56,15 @@ class ZfsMgmt::ZfsMgr::Send < Thor
       ZfsMgmt.send_state_show(check: options[:check], filter: options[:filter])
     end
 
-    desc "delete ZFS", "delete a key from the state db"
-    def delete(zfs)
+    desc "delete SOURCE [DESTINATION]", "delete a key (or all entries for a source) from the state db"
+    def delete(zfs, destination = nil)
       ZfsMgmt.set_log_level(options[:loglevel])
       ZfsMgmt.global_options = options
-      ZfsMgmt.send_state_delete(zfs)
+      if destination
+        ZfsMgmt.send_state_delete(zfs, destination)
+      else
+        ZfsMgmt.send_state_delete(zfs)
+      end
     end
 
     desc "wipe", "remove all keys in state db"

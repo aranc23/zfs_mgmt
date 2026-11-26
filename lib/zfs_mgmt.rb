@@ -71,6 +71,19 @@ module ZfsMgmt
     "#{remote}:#{path}"
   end
 
+  def self.parse_destinations(value)
+    case value
+    when nil
+      []
+    when String
+      value.split(',').map(&:strip).reject(&:empty?).uniq
+    when Array
+      value.flat_map { |v| v.is_a?(String) ? v.split(',').map(&:strip) : [] }.reject(&:empty?).uniq
+    else
+      []
+    end
+  end
+
   def self.warn_deprecated_remote(context = nil)
     suffix = context ? " (#{context})" : ''
     $logger&.warn("remote option is deprecated#{suffix}; include the remote host in destination instead (e.g. user@host:pool/dataset)")
@@ -637,19 +650,35 @@ module ZfsMgmt
     zfs_name = zfs_obj.name
     sorted = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }
     discard_first = recv_discard_first?(options, zfs_obj)
-    raw_destination = if discard_first
-                        zfs_obj.discard_first_destination
-                      else
-                        zfs_obj.resolved_destination
-                      end
-    raw_recv_target = discard_first ? zfs_obj.base_destination : raw_destination
-    _, destination_path = parse_destination(raw_destination)
-    _, recv_target = parse_destination(raw_recv_target)
-    unless destination_path
+    entries = zfs_obj.destination_entries
+    if entries.empty?
       $logger.error("fatal error: unable to determine destination path for #{zfs_name}")
       exit(1)
     end
-    cmd_prefix = recv_command_prefix(options, zfs_obj)
+    opt_remote = options.key?(:remote) ? options[:remote] : options['remote']
+    opt_remote = nil if opt_remote.respond_to?(:empty?) && opt_remote.empty?
+    warn_deprecated_remote('CLI --remote') if opt_remote
+
+    entries.each do |entry|
+      zfs_send_to_destination(options, zfs_obj, snaps, sorted, entry, discard_first: discard_first, opt_remote: opt_remote)
+    end
+  end
+
+  def self.zfs_send_to_destination(options, zfs_obj, snaps, sorted, entry, discard_first:, opt_remote:)
+    zfs_name = zfs_obj.name
+    raw_destination = discard_first ? zfs_obj.discard_first_for(entry[:base]) : entry[:resolved]
+    raw_recv_target = discard_first ? entry[:base] : raw_destination
+    _, destination_path = parse_destination(raw_destination)
+    _, recv_target = parse_destination(raw_recv_target)
+    if destination_path.nil? || destination_path.empty?
+      $logger.error("fatal error: unable to determine destination path for #{zfs_name}")
+      return
+    end
+    entry_remote = entry[:explicit_remote] || opt_remote || zfs_obj.remote
+    entry_remote = nil if entry_remote.respond_to?(:empty?) && entry_remote.empty?
+    cmd_prefix = entry_remote ? ['ssh', entry_remote] : []
+    state_destination = format_destination(entry_remote, destination_path)
+
     # does the destination zfs already exist?
     remote_zfs_state = ''
     begin
@@ -688,10 +717,10 @@ module ZfsMgmt
       e = zfs_send_estimate(com) if options[:verbose] == 'pv'
       com += mbuffer_command(options) if options[:mbuffer]
       com += pv_command(options,e) if options[:verbose] == 'pv'
-      com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false)
+      com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
  
       status = system_com(com)
-      record_send_state(zfs_name, status) unless options[:noop]
+      record_send_state(zfs_name, status, destination: state_destination) unless options[:noop]
       unless status && status.success?
         return
       end
@@ -706,10 +735,10 @@ module ZfsMgmt
       com += mbuffer_command(options) if options[:mbuffer]
       com += pv_command(options,e) if options[:verbose] == 'pv'
 
-      com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false)
+      com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
 
       status = system_com(com)
-      record_send_state(zfs_name, status) unless options[:noop]
+      record_send_state(zfs_name, status, destination: state_destination) unless options[:noop]
       unless status && status.success?
         return
       end
@@ -751,10 +780,10 @@ module ZfsMgmt
         e = zfs_send_estimate(com) if options[:verbose] == 'pv'
         com += mbuffer_command(options) if options[:mbuffer]
         com += pv_command(options,e) if options[:verbose] == 'pv'
-        com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false)
+        com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
 
         status = system_com(com)
-        record_send_state(zfs_name, status) unless options[:noop]
+        record_send_state(zfs_name, status, destination: state_destination) unless options[:noop]
         return
       end
       $logger.debug("skipping remote snapshot #{rsnap} because the same snapshot doesn't exist locally #{rsnap.sub(destination_path,zfs_name)}")
@@ -822,7 +851,7 @@ module ZfsMgmt
     VOLUME_UNSUPPORTED_RECV_PROPERTIES.include?(prop_name)
   end
 
-  def self.zfs_recv_com(options,extra_opts,props,target, warn_deprecated: true)
+  def self.zfs_recv_com(options,extra_opts,props,target, warn_deprecated: true, command_prefix: nil)
     zfs_obj = props.is_a?(ZfsMgmt::Zfs) ? props : ZfsMgmt::Zfs.from_zfs_props('', props)
     zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv' ]
     zfs_recv_com.push('-s') if recv_state_enabled?(options, zfs_obj)
@@ -862,7 +891,7 @@ module ZfsMgmt
     _, target_path = parse_destination(target)
     zfs_recv_com.push(dq(target_path))
 
-    prefix = recv_command_prefix(options, zfs_obj, target, warn_deprecated: warn_deprecated)
+    prefix = command_prefix.nil? ? recv_command_prefix(options, zfs_obj, target, warn_deprecated: warn_deprecated) : command_prefix
     unless prefix.empty?
       if options[:mbuffer]
         zfs_recv_com = mbuffer_command(options) + zfs_recv_com
@@ -886,12 +915,15 @@ module ZfsMgmt
     end
 
     if props.is_a?(ZfsMgmt::Zfs)
-      return props.destination_explicit_remote if props.destination_explicit_remote
+      return props.destination_explicit_remote if props.destinations.length <= 1 && props.destination_explicit_remote
       return opt_remote if opt_remote
       return props.remote
     elsif props.is_a?(Hash)
-      prop_dest_remote, = parse_destination(props['zfsmgmt:destination'])
-      return prop_dest_remote if prop_dest_remote
+      raw_dest = props['zfsmgmt:destination']
+      if raw_dest && !raw_dest.is_a?(Array) && !raw_dest.to_s.include?(',')
+        prop_dest_remote, = parse_destination(raw_dest)
+        return prop_dest_remote if prop_dest_remote
+      end
       return opt_remote if opt_remote
       return props['zfsmgmt:remote']
     end
@@ -994,7 +1026,7 @@ module ZfsMgmt
         $logger.debug("skipping filesystem with send disabled: #{zfs.name}")
         next
       end
-      unless zfs.destination
+      if zfs.destinations.empty?
         $logger.error("#{zfs.name}: you must specify a destination zfs path via the user property zfsmgmt:destination, skipping")
         next
       end
@@ -1051,6 +1083,7 @@ module ZfsMgmt
 
   SEND_WARN_SECONDS = 36 * 60 * 60
   SEND_CRIT_SECONDS = 72 * 60 * 60
+  SEND_STATE_KEY_SEPARATOR = ' -> '.freeze
 
   def self.send_state_db_path
     if global_options && global_options[:state_db]
@@ -1071,7 +1104,13 @@ module ZfsMgmt
     PStore.new(path)
   end
 
-  def self.record_send_state(zfs, status, timestamp: Time.now.to_i)
+  def self.send_state_key(source, destination = nil)
+    return source.to_s if destination.nil? || destination.to_s.empty?
+
+    "#{source}#{SEND_STATE_KEY_SEPARATOR}#{destination}"
+  end
+
+  def self.record_send_state(zfs, status, destination: nil, timestamp: Time.now.to_i)
     exit_code = if status.nil?
                   1
                 elsif status.respond_to?(:exitstatus)
@@ -1079,9 +1118,16 @@ module ZfsMgmt
                 else
                   status.to_i
                 end
+    key = send_state_key(zfs, destination)
+    payload = {
+      'source' => zfs.to_s,
+      'destination' => destination,
+      'timestamp' => timestamp.to_i,
+      'exit' => exit_code
+    }
     store = send_state_store
     store.transaction do
-      store[zfs] = JSON.generate({ 'timestamp' => timestamp.to_i, 'exit' => exit_code })
+      store[key] = JSON.generate(payload)
     end
   end
 
@@ -1091,20 +1137,34 @@ module ZfsMgmt
     store = send_state_store(path)
     entries = {}
     store.transaction(true) do
-      store.roots.sort.each do |zfs|
-        next unless match_filter?(zfs, filter)
-        raw = store[zfs]
-        data = raw.is_a?(String) ? JSON.parse(raw) : raw
-        entries[zfs] = data
+      store.roots.sort.each do |key|
+        key_str = key.to_s
+        next unless match_filter?(key_str, filter)
+        raw = store[key]
+        data = raw.is_a?(String) ? JSON.parse(raw) : raw.dup
+        unless data.key?('source')
+          src, dst = key_str.split(SEND_STATE_KEY_SEPARATOR, 2)
+          data['source'] = src
+          data['destination'] = dst if dst && !data.key?('destination')
+        end
+        entries[key_str] = data
       end
     end
     entries
   end
 
-  def self.send_state_delete(zfs)
+  def self.send_state_delete(zfs, destination = nil)
     store = send_state_store
     store.transaction do
-      store.delete(zfs)
+      if destination && !destination.to_s.empty?
+        store.delete(send_state_key(zfs, destination))
+      else
+        store.delete(zfs)
+        prefix = "#{zfs}#{SEND_STATE_KEY_SEPARATOR}"
+        store.roots.each do |k|
+          store.delete(k) if k.to_s.start_with?(prefix)
+        end
+      end
     end
   end
 
@@ -1121,7 +1181,7 @@ module ZfsMgmt
     entries = send_state_entries(filter: filter)
     if check
       now = Time.now.to_i
-      entries.each do |zfs, data|
+      entries.each do |key, data|
         ts = data['timestamp'].to_i
         exit_code = data['exit'].to_i
         age = [now - ts, 0].max
@@ -1133,14 +1193,15 @@ module ZfsMgmt
                 else
                   0
                 end
-        puts "#{state} \"zfs_send #{zfs}\" age=#{age};#{SEND_WARN_SECONDS};#{SEND_CRIT_SECONDS} last send #{time_str} exit #{exit_code}"
+        label = send_state_key(data['source'] || key, data['destination'])
+        puts "#{state} \"zfs_send #{label}\" age=#{age};#{SEND_WARN_SECONDS};#{SEND_CRIT_SECONDS} last send #{time_str} exit #{exit_code}"
       end
     else
       return if entries.empty?
       table = Text::Table.new
-      table.head = ['zfs', 'timestamp', 'exit']
-      table.rows = entries.map do |zfs, data|
-        [zfs, local_epoch_to_datetime(data['timestamp'].to_i), data['exit']]
+      table.head = ['source', 'destination', 'timestamp', 'exit']
+      table.rows = entries.map do |key, data|
+        [data['source'] || key, data['destination'].to_s, local_epoch_to_datetime(data['timestamp'].to_i), data['exit']]
       end
       print table.to_s
     end

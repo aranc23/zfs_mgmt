@@ -225,6 +225,37 @@ RSpec.describe ZfsMgmt::Config do
       bad_per_zfs_ovr = described_class.from_hash("zfs" => { "pool/ds" => { "overrides" => { "canmount" => 123 } } })
       expect(bad_per_zfs_ovr).not_to be_valid
       expect(bad_per_zfs_ovr.errors[:zfs].join).to include("pool/ds: overrides.canmount: property and value must be strings")
+
+      bad_dest_int = described_class.from_hash("zfs" => { "pool/ds" => { "destination" => 123 } })
+      expect(bad_dest_int).not_to be_valid
+      expect(bad_dest_int.errors[:zfs].join).to include("pool/ds: destination must be a string or an array of strings")
+
+      bad_dest_arr = described_class.from_hash("zfs" => { "pool/ds" => { "destination" => ["backup/a", 456] } })
+      expect(bad_dest_arr).not_to be_valid
+      expect(bad_dest_arr.errors[:zfs].join).to include("pool/ds: destination must be a string or an array of strings")
+    end
+
+    it "supports array destinations in TOML config including inheritance and child override" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "10-multi.toml"), <<~TOML)
+          [zfs."pool/a"]
+          send = true
+          destination = ["backup/a", "zfs_recv@drhost:offsite/a"]
+
+          [zfs."pool/a/child"]
+          send = true
+
+          [zfs."pool/a/override"]
+          send = true
+          destination = "single/dest"
+        TOML
+
+        cfg = described_class.load_dir(dir)
+        expect(cfg).to be_valid
+        expect(cfg.zfs["pool/a"].destinations).to eq(["backup/a/a", "zfs_recv@drhost:offsite/a/a"])
+        expect(cfg.zfs["pool/a/child"].destinations).to eq(["backup/a/a/child", "zfs_recv@drhost:offsite/a/a/child"])
+        expect(cfg.zfs["pool/a/override"].destinations).to eq(["single/dest/override"])
+      end
     end
 
     it "supports host:path and user@host:path in destination and warns on deprecated remote" do
@@ -452,6 +483,10 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg.zfs["tank/data"].excludes).to eq(["quota"])
       expect(cfg.zfs["tank/data"].overrides).to eq({ "canmount" => "**", "compression" => "zstd" })
       expect(cfg.zfs["tank/data"].override_options).to eq(["compression=zstd"])
+      expect(cfg.zfs["tank/archive"].destinations).to eq([
+        "backup/archive/archive",
+        "zfs_recv@offsite.example.com:offsite/archive/archive"
+      ])
       expect(cfg.zfs["tank/archive"].restic_backup).to eq(true)
       expect(cfg.zfs["tank/archive"].snapshot_recursive).to eq(true)
     end
@@ -477,6 +512,12 @@ RSpec.describe ZfsMgmt::Config do
       expect(send_schema["oneOf"]).to eq([
         { "type" => "boolean" },
         { "type" => "string", "enum" => %w[local] }
+      ])
+
+      dest_schema = zfs_schema.dig("properties", "destination")
+      expect(dest_schema["oneOf"]).to eq([
+        { "type" => "string" },
+        { "type" => "array", "items" => { "type" => "string" } }
       ])
     end
 
