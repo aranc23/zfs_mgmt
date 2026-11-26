@@ -354,6 +354,10 @@ RSpec.describe ZfsMgmt do
         end
         described_class.start(["all", "-s"])
       end
+
+      it "does not expose a --destination CLI option on send all" do
+        expect(described_class.commands["all"].options.keys).not_to include("destination", :destination)
+      end
     end
   end
 
@@ -1422,32 +1426,31 @@ RSpec.describe ZfsMgmt do
       ZfsMgmt.zfs_send({}, zfs, props, snaps)
     end
 
-    it "supports [user@]host:destination with discard_first and CLI destination overrides" do
+    it "supports [user@]host:destination with discard_first" do
       props = {
         "zfsmgmt:destination" => "drhost:backup/dest",
         "zfsmgmt:destination@source" => "inherited from tank",
         "zfsmgmt:recv_discard_first" => "true",
         "zfsmgmt:remote" => "ignored@oldhost"
       }
-      check_dest = "other/dest/sub/fs"
-      recv_target = "other/dest"
-      opts = Thor::CoreExt::HashWithIndifferentAccess.new(destination: "cli@newhost:other/dest")
+      check_dest = "backup/dest/sub/fs"
+      recv_target = "backup/dest"
 
       expect($logger).to receive(:warn).with(/remote option is deprecated/)
-      expect(ZfsMgmt).to receive(:zfsget).with(zfs: check_dest, command_prefix: ["ssh", "cli@newhost"])
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: check_dest, command_prefix: ["ssh", "drhost"])
         .and_raise(ZfsMgmt::ZfsDatasetNotFoundError.new("dataset does not exist: #{check_dest}"))
 
       status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", '"tank/sub/fs@snap1"', "|",
-        "ssh", "cli@newhost",
+        "ssh", "drhost",
         "'zfs recv -s -d \"#{recv_target}\"'"
       ]).ordered.and_return(status_ok)
 
       expect(ZfsMgmt).to receive(:zfsget).with(
         zfs: check_dest,
         types: ["snapshot"],
-        command_prefix: ["ssh", "cli@newhost"],
+        command_prefix: ["ssh", "drhost"],
         properties: ["creation", "userrefs"]
       ).and_return({
         "#{check_dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
@@ -1455,11 +1458,11 @@ RSpec.describe ZfsMgmt do
 
       expect(ZfsMgmt).to receive(:system_com).with([
         "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
-        "ssh", "cli@newhost",
+        "ssh", "drhost",
         "'zfs recv -s -d \"#{recv_target}\"'"
       ]).ordered.and_return(status_ok)
 
-      ZfsMgmt.zfs_send(opts, zfs, props, snaps)
+      ZfsMgmt.zfs_send({}, zfs, props, snaps)
     end
 
     it "does not let deprecated remote override an explicit host in destination" do

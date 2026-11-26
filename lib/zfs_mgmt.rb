@@ -638,11 +638,11 @@ module ZfsMgmt
     sorted = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }
     discard_first = recv_discard_first?(options, zfs_obj)
     raw_destination = if discard_first
-                        zfs_obj.discard_first_destination(options[:destination])
+                        zfs_obj.discard_first_destination
                       else
-                        zfs_obj.resolved_destination(options[:destination])
+                        zfs_obj.resolved_destination
                       end
-    raw_recv_target = discard_first ? zfs_obj.base_destination(options[:destination]) : raw_destination
+    raw_recv_target = discard_first ? zfs_obj.base_destination : raw_destination
     _, destination_path = parse_destination(raw_destination)
     _, recv_target = parse_destination(raw_recv_target)
     unless destination_path
@@ -875,8 +875,6 @@ module ZfsMgmt
     opts = options || {}
     opt_remote = opts.key?(:remote) ? opts[:remote] : opts['remote']
     opt_remote = nil if opt_remote.respond_to?(:empty?) && opt_remote.empty?
-    opt_dest = opts.key?(:destination) ? opts[:destination] : opts['destination']
-    opt_dest = nil if opt_dest.respond_to?(:empty?) && opt_dest.empty?
 
     if warn_deprecated && opt_remote
       warn_deprecated_remote('CLI --remote')
@@ -885,13 +883,6 @@ module ZfsMgmt
     if target
       target_remote, = parse_destination(target)
       return target_remote if target_remote
-    end
-
-    if opt_dest
-      dest_remote, = parse_destination(opt_dest)
-      return dest_remote if dest_remote
-      return opt_remote if opt_remote
-      return props.is_a?(ZfsMgmt::Zfs) ? props.remote : props&.dig('zfsmgmt:remote')
     end
 
     if props.is_a?(ZfsMgmt::Zfs)
@@ -1004,7 +995,7 @@ module ZfsMgmt
         next
       end
       unless zfs.destination
-        $logger.error("#{zfs.name}: you must specify a destination zfs path via the user property zfsmgmt:destination, even if using --destination on the command line, skipping")
+        $logger.error("#{zfs.name}: you must specify a destination zfs path via the user property zfsmgmt:destination, skipping")
         next
       end
       if zfs.snapshots.empty?

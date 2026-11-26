@@ -286,8 +286,7 @@ already include a `hostname:` or `user@hostname:` prefix.
 
 ### zfsmgmt:destination
 Base destination ZFS dataset path for `zfs send`/`recv` (required for
-`zfsmgr send all`, even if `--destination` is passed on the command
-line). Supports local and remote forms:
+`zfsmgr send all`). Supports local and remote forms:
 - `zpool/zfs/zfs2` (local)
 - `hostname:zpool/zfs/zfs2` (remote via SSH)
 - `user@hostname:zpool/zfs/zfs2` (remote via SSH with user)
@@ -354,7 +353,7 @@ Boolean (`true`/`on`). Pass `-u` (do not mount received filesystem) to
 ### zfsmgmt:recv_discard_first (default: false)
 Boolean (`true`/`on`). Pass `-d` (discard the first element of the sent
 snapshot's filesystem name) to `zfs recv`, passing the base
-`zfsmgmt:destination` (or `--destination`) as the `zfs recv` target and
+`zfsmgmt:destination` as the `zfs recv` target and
 stripping the first path element for remote existence/snapshot checks.
 
 ### zfsmgmt:recv_force (default: false)
