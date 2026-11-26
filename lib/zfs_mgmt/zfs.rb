@@ -58,6 +58,7 @@ module ZfsMgmt
         snapshot snap_prefix snap_timestamp
         send remote destination send_replicate
         recv_state
+        mbuffer mbuffer_size
         excludes overrides ssh_config
         restic_backup restic_repository
       ] +
@@ -150,6 +151,10 @@ module ZfsMgmt
                description: 'ZFS property overrides to set on zfs recv (-o property=value)'
       property :ssh_config, T::Hash[String, String], optional: true,
                description: 'SSH options passed via -o option=value (merged with BatchMode=yes default and top-level ssh_config)'
+      property :mbuffer, T::Boolean, optional: true, default: true,
+               description: 'Whether to insert mbuffer between zfs send and zfs recv'
+      property :mbuffer_size, String, optional: true,
+               description: 'Buffer size passed to mbuffer -m option (e.g. 512M, 1G)'
 
       # Restic backup properties
       property :restic_backup, T::Boolean, optional: true, default: false,
@@ -162,6 +167,8 @@ module ZfsMgmt
     validate :validate_excludes
     validate :validate_overrides
     validate :validate_ssh_config
+    validate :validate_mbuffer
+    validate :validate_mbuffer_size
 
     def initialize(attributes = {})
       attrs = attributes.transform_keys(&:to_sym)
@@ -465,6 +472,9 @@ module ZfsMgmt
         attrs[:ssh_config] = ZfsMgmt.parse_ssh_config(props['zfsmgmt:ssh_config'], context: ctx)
       end
 
+      attrs[:mbuffer] = !ZfsMgmt.prop_off?(props['zfsmgmt:mbuffer']) if props.key?('zfsmgmt:mbuffer')
+      attrs[:mbuffer_size] = props['zfsmgmt:mbuffer_size'] if props.key?('zfsmgmt:mbuffer_size')
+
       attrs[:restic_backup] = ZfsMgmt.prop_on?(props['zfsmgmt:restic_backup']) if props.key?('zfsmgmt:restic_backup')
       attrs[:restic_repository] = props['zfsmgmt:restic_repository'] if props.key?('zfsmgmt:restic_repository')
 
@@ -496,6 +506,18 @@ module ZfsMgmt
 
     def validate_ssh_config
       validate_string_hash(:ssh_config, ssh_config, 'hash of option=value pairs')
+    end
+
+    def validate_mbuffer
+      return if mbuffer.nil? || mbuffer == true || mbuffer == false
+
+      errors.add(:mbuffer, 'must be a boolean')
+    end
+
+    def validate_mbuffer_size
+      return if mbuffer_size.nil? || mbuffer_size.is_a?(String)
+
+      errors.add(:mbuffer_size, 'must be a string')
     end
 
     def validate_string_hash(attr, value, expected_desc)

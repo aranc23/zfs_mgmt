@@ -144,11 +144,13 @@ Precedence is: **CLI options > per-dataset config (child > parent) > top-level c
 
 ### Format
 
-At the top level, `excludes`, `[overrides]`, and `[ssh_config]` set default `zfs recv` `-x`/`-o` options and `ssh` `-o` options (`ssh_config` defaults to `BatchMode = "yes"`). Per-dataset options are configured under `[zfs."pool/dataset"]` using single-bracket TOML tables (not double-bracket `[[zfs."pool/dataset"]]` array-of-tables syntax). Per-dataset `excludes`, `[zfs."pool/dataset".overrides]`, and `[zfs."pool/dataset".ssh_config]` are also supported using single-bracket tables. Dataset names containing `/` (or other characters not allowed in TOML bare keys) must be quoted:
+At the top level, `mbuffer`, `mbuffer_size`, `excludes`, `[overrides]`, and `[ssh_config]` set default `mbuffer` buffering, `zfs recv` `-x`/`-o` options, and `ssh` `-o` options (`mbuffer` defaults to `true`, `ssh_config` defaults to `BatchMode = "yes"`). Per-dataset options are configured under `[zfs."pool/dataset"]` using single-bracket TOML tables (not double-bracket `[[zfs."pool/dataset"]]` array-of-tables syntax). Per-dataset `excludes`, `[zfs."pool/dataset".overrides]`, and `[zfs."pool/dataset".ssh_config]` are also supported using single-bracket tables. Dataset names containing `/` (or other characters not allowed in TOML bare keys) must be quoted:
 
 ```toml
 #:schema https://raw.githubusercontent.com/aranc23/zfs_mgmt/master/schema/config.schema.json
 
+mbuffer = true
+mbuffer_size = "512M"
 excludes = ["mountpoint", "sharenfs"]
 
 [overrides]
@@ -166,6 +168,7 @@ snapshot = true
 [zfs."tank/data"]
 send = true
 destination = "zfs_recv@backup.example.com:backup/tank"
+mbuffer_size = "1G"
 excludes = ["quota"]
 
 [zfs."tank/data".overrides]
@@ -347,6 +350,18 @@ Boolean (`true`/`on`). Pass `-d` (discard the first element of the sent
 snapshot's filesystem name) to `zfs recv`, passing the base
 `zfsmgmt:destination` as the `zfs recv` target and
 stripping the first path element for remote existence/snapshot checks.
+
+### zfsmgmt:mbuffer (default: true)
+Boolean (`true`/`on`, or `false`/`off`). Controls whether `mbuffer` is
+inserted into the `zfs send` | `zfs recv` pipeline. Configurable at
+top-level config (`mbuffer`), per-dataset config (`[zfs."<dataset>"]`),
+ZFS user property (`zfsmgmt:mbuffer`), and CLI (`--mbuffer` / `--no-mbuffer`).
+
+### zfsmgmt:mbuffer_size
+Buffer size string passed to `mbuffer -m` (for example `512M` or `1G`).
+Configurable at top-level config (`mbuffer_size`), per-dataset config
+(`[zfs."<dataset>"]`), ZFS user property (`zfsmgmt:mbuffer_size`), and
+CLI (`--mbuffer-size`).
 
 ### zfsmgmt:excludes
 Comma-separated list of ZFS properties to exclude on `zfs recv` (`-x`),

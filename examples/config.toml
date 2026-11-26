@@ -26,8 +26,13 @@
 #   - in overrides: canmount = "**" removes "canmount"; "**" clears all lower overrides
 
 # ---------------------------------------------------------------------------
-# Top-level zfs recv options (previously only available via CLI flags)
+# Top-level zfs send/recv options
 # ---------------------------------------------------------------------------
+
+# Insert mbuffer between zfs send and zfs recv (defaults to true unless disabled).
+mbuffer = true
+# Buffer size passed to mbuffer -m option (e.g. "512M", "1G").
+mbuffer_size = "512M"
 
 # Properties to exclude on zfs recv (-x <property>).
 # Note: volume-unsupported properties (canmount, mountpoint, quota) are
@@ -94,6 +99,7 @@ recv_drop_holds = false         # -h
 recv_unmount = true             # -u
 recv_discard_first = false      # -d (uses base destination as target)
 recv_force = false              # -F
+mbuffer_size = "1G"             # override top-level mbuffer_size for this dataset
 excludes = ["quota"]            # merged with top-level excludes and zfsmgmt:excludes
 
 # Per-dataset zfs recv property overrides (merged with top-level [overrides] and zfsmgmt:overrides)
@@ -111,5 +117,6 @@ manage = false
 snapshot = "recursive"
 send = "local"
 destination = ["backup/archive", "zfs_recv@offsite.example.com:offsite/archive"]
+mbuffer = false
 restic_backup = true
 restic_repository = "/srv/restic/zfs"
