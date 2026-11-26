@@ -3,6 +3,31 @@ require 'easy_talk'
 require 'set'
 
 module ZfsMgmt
+  class TypedHashBuilder
+    def initialize(_name, type, constraints = {})
+      @type = type
+      @constraints = constraints || {}
+    end
+
+    def build
+      schema = { type: 'object' }
+      schema[:description] = @constraints[:description] if @constraints[:description]
+      schema[:default] = @constraints[:default] if @constraints.key?(:default)
+      value_type = @type.respond_to?(:values) ? @type.values : nil
+      value_type = value_type.raw_type if value_type.respond_to?(:raw_type)
+      if value_type
+        schema[:additionalProperties] = EasyTalk::Property.new(:_value, value_type, {}).build
+      end
+      schema
+    end
+  end
+end
+
+unless EasyTalk::Builders::Registry.registered?('T::Types::TypedHash')
+  EasyTalk::Builders::Registry.register('T::Types::TypedHash', ZfsMgmt::TypedHashBuilder, collection: true)
+end
+
+module ZfsMgmt
   class Zfs
     include EasyTalk::Model
 
@@ -33,6 +58,7 @@ module ZfsMgmt
         snapshot snap_prefix snap_timestamp
         send remote destination send_replicate
         recv_state
+        excludes overrides
         restic_backup restic_repository
       ] +
       SEND_BOOL_PROPS.map(&:to_s) +
@@ -118,6 +144,10 @@ module ZfsMgmt
                description: 'Pass -d (discard first path element) to zfs recv'
       property :recv_force, T::Boolean, optional: true, default: false,
                description: 'Pass -F (force rollback) to zfs recv'
+      property :excludes, T::Array[String], optional: true,
+               description: 'ZFS properties to exclude on zfs recv (-x)'
+      property :overrides, T::Hash[String, String], optional: true,
+               description: 'ZFS property overrides to set on zfs recv (-o property=value)'
 
       # Restic backup properties
       property :restic_backup, T::Boolean, optional: true, default: false,
@@ -126,16 +156,38 @@ module ZfsMgmt
                description: 'Target restic repository for backups'
     end
 
+    validate :validate_excludes
+    validate :validate_overrides
+
     def initialize(attributes = {})
       attrs = attributes.transform_keys(&:to_sym)
       @snapshots = attrs.delete(:snapshots) if attrs.key?(:snapshots)
       @destination_relative_path = attrs.delete(:destination_relative_path) if attrs.key?(:destination_relative_path)
       @destination_base = attrs.delete(:destination_base) if attrs.key?(:destination_base)
+      @config_merged = attrs.key?(:config_merged) ? !!attrs.delete(:config_merged) : false
       if attrs.key?(:send) && !attrs.key?(:send_enabled)
         attrs[:send_enabled] = attrs.delete(:send)
       end
       @provided_attributes = attrs.keys.to_set
+      attrs[:excludes] = [] unless attrs.key?(:excludes)
+      if attrs.key?(:overrides)
+        if attrs[:overrides].is_a?(Hash)
+          attrs[:overrides] = attrs[:overrides].each_with_object({}) { |(k, v), h| h[k.to_s] = v }
+        end
+      else
+        attrs[:overrides] = {}
+      end
       super(attrs)
+    end
+
+    def config_merged?
+      @config_merged
+    end
+
+    def override_options
+      return [] unless overrides.is_a?(Hash)
+
+      overrides.reject { |_k, v| v == ZfsMgmt::KNOCKOUT_PREFIX }.map { |k, v| "#{k}=#{v}" }
     end
 
     def send=(value)
@@ -206,10 +258,10 @@ module ZfsMgmt
       end
     end
 
-    def self.from_zfs_props(name, props = {})
+    def self.from_zfs_props(name, props = {}, config_merged: false)
       props ||= {}
       warn_unknown_zfs_props(name, props)
-      attrs = { name: name }
+      attrs = { name: name, config_merged: config_merged }
       attrs[:type] = props['type'] if props.key?('type')
 
       attrs[:manage] = ZfsMgmt.prop_on?(props['zfsmgmt:manage'])
@@ -288,10 +340,49 @@ module ZfsMgmt
         attrs[prop] = ZfsMgmt.prop_on?(props[key]) if props.key?(key)
       end
 
+      if props.key?('zfsmgmt:excludes')
+        attrs[:excludes] = ZfsMgmt.parse_excludes(props['zfsmgmt:excludes'])
+      end
+
+      if props.key?('zfsmgmt:overrides')
+        ctx = (name.nil? || name.empty?) ? nil : name
+        attrs[:overrides] = ZfsMgmt.parse_overrides(props['zfsmgmt:overrides'], context: ctx)
+      end
+
       attrs[:restic_backup] = ZfsMgmt.prop_on?(props['zfsmgmt:restic_backup']) if props.key?('zfsmgmt:restic_backup')
       attrs[:restic_repository] = props['zfsmgmt:restic_repository'] if props.key?('zfsmgmt:restic_repository')
 
       new(attrs)
+    end
+
+    private
+
+    def validate_excludes
+      return if excludes.nil?
+
+      unless excludes.is_a?(Array) && excludes.all? { |item| item.is_a?(String) }
+        errors.add(:excludes, 'must be an array of strings')
+      end
+    end
+
+    def validate_overrides
+      return if overrides.nil?
+
+      if overrides.is_a?(Array)
+        errors.add(:overrides, "must be a hash of property=value pairs (use [zfs.\"#{name}\".overrides], not [[zfs.\"#{name}\".overrides]])")
+        return
+      end
+
+      unless overrides.is_a?(Hash)
+        errors.add(:overrides, 'must be a hash of property=value pairs')
+        return
+      end
+
+      overrides.each do |k, v|
+        unless k.is_a?(String) && v.is_a?(String)
+          errors.add(:overrides, "#{k}: property and value must be strings")
+        end
+      end
     end
   end
 end

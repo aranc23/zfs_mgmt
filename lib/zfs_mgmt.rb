@@ -47,8 +47,159 @@ $properties_xlate = {
 $lock = nil
 
 module ZfsMgmt
+  KNOCKOUT_PREFIX = '**'.freeze
+
   class << self
     attr_accessor :global_options, :config
+  end
+
+  def self.parse_excludes(value)
+    case value
+    when nil
+      []
+    when String
+      value.split(',').map(&:strip).reject(&:empty?)
+    when Array
+      value.map { |v| v.to_s.strip }.reject(&:empty?)
+    else
+      []
+    end
+  end
+
+  def self.parse_override_entry(entry, context: nil)
+    str = entry.to_s.strip
+    return nil if str.empty?
+    return [KNOCKOUT_PREFIX, KNOCKOUT_PREFIX] if str == KNOCKOUT_PREFIX
+
+    if str.include?('=')
+      k, v = str.split('=', 2)
+      k = k.strip
+      v = v.strip
+      if k.empty?
+        target = context ? " on #{context}" : ''
+        $logger&.warn("ignoring malformed override '#{str}'#{target}")
+        return nil
+      end
+      return [k, v]
+    end
+
+    if str.start_with?(KNOCKOUT_PREFIX)
+      k = str[KNOCKOUT_PREFIX.length..-1].strip
+      return [KNOCKOUT_PREFIX, KNOCKOUT_PREFIX] if k.empty?
+      return [k, KNOCKOUT_PREFIX]
+    end
+
+    target = context ? " on #{context}" : ''
+    $logger&.warn("ignoring malformed override '#{str}'#{target}")
+    nil
+  end
+
+  def self.parse_overrides(value, context: nil)
+    case value
+    when nil
+      {}
+    when Hash
+      value.each_with_object({}) do |(k, v), h|
+        key = k.to_s.strip
+        next if key.empty?
+
+        h[key] = v.to_s.strip
+      end
+    when String
+      result = {}
+      value.split(',').each do |part|
+        parsed = parse_override_entry(part, context: context)
+        next unless parsed
+
+        result[parsed[0]] = parsed[1]
+      end
+      result
+    when Array
+      result = {}
+      value.each do |entry|
+        parsed = parse_override_entry(entry, context: context)
+        next unless parsed
+
+        result[parsed[0]] = parsed[1]
+      end
+      result
+    else
+      {}
+    end
+  end
+
+  def self.merge_excludes(*layers, strip_knockouts: true)
+    result = []
+    layers.each do |layer|
+      next if layer.nil?
+
+      parse_excludes(layer).each do |item|
+        if item == KNOCKOUT_PREFIX
+          result.clear
+          result << KNOCKOUT_PREFIX unless strip_knockouts
+        elsif item.start_with?(KNOCKOUT_PREFIX)
+          target = item[KNOCKOUT_PREFIX.length..-1].strip
+          next if target.empty?
+
+          result.delete(target)
+          unless strip_knockouts
+            knockout_token = "#{KNOCKOUT_PREFIX}#{target}"
+            result << knockout_token unless result.include?(knockout_token)
+          end
+        else
+          result.delete("#{KNOCKOUT_PREFIX}#{item}")
+          result << item unless result.include?(item)
+        end
+      end
+    end
+    result
+  end
+
+  def self.merge_overrides(*layers, strip_knockouts: true)
+    result = {}
+    layers.each do |layer|
+      next if layer.nil?
+
+      parse_overrides(layer).each do |k, v|
+        if k == KNOCKOUT_PREFIX
+          result.clear
+          result[KNOCKOUT_PREFIX] = KNOCKOUT_PREFIX unless strip_knockouts
+        elsif v == KNOCKOUT_PREFIX
+          if strip_knockouts
+            result.delete(k)
+          else
+            result[k] = KNOCKOUT_PREFIX
+          end
+        else
+          result[k] = v
+        end
+      end
+    end
+    result
+  end
+
+  def self.resolve_excludes(zfs_obj, cli_exclude = nil)
+    layers = [zfs_obj.excludes]
+    if config && !zfs_obj.config_merged?
+      layers << config.excludes
+      layers.concat(config.zfs_excludes_layers_for(zfs_obj.name))
+    end
+    layers << cli_exclude unless cli_exclude.nil?
+    merge_excludes(*layers, strip_knockouts: true)
+  end
+
+  def self.resolve_overrides(zfs_obj, cli_option = nil)
+    layers = [zfs_obj.overrides]
+    if config && !zfs_obj.config_merged?
+      layers << config.overrides
+      layers.concat(config.zfs_overrides_layers_for(zfs_obj.name))
+    end
+    layers << cli_option unless cli_option.nil?
+    merge_overrides(*layers, strip_knockouts: true)
+  end
+
+  def self.build_zfs_from_props(zfs_name, props)
+    ZfsMgmt::Zfs.from_zfs_props(zfs_name, merge_config_props(zfs_name, props), config_merged: !config.nil?)
   end
 
   def self.config_dir
@@ -72,7 +223,20 @@ module ZfsMgmt
     base = props || {}
     return base unless config && zfs_name && !zfs_name.empty?
 
-    base.merge(config.zfs_props_for(zfs_name))
+    merged = base.merge(config.zfs_props_for(zfs_name))
+    excludes = merge_excludes(base['zfsmgmt:excludes'], config.excludes, *config.zfs_excludes_layers_for(zfs_name), strip_knockouts: true)
+    overrides = merge_overrides(base['zfsmgmt:overrides'], config.overrides, *config.zfs_overrides_layers_for(zfs_name), strip_knockouts: true)
+    if excludes.empty?
+      merged.delete('zfsmgmt:excludes')
+    else
+      merged['zfsmgmt:excludes'] = excludes
+    end
+    if overrides.empty?
+      merged.delete('zfsmgmt:overrides')
+    else
+      merged['zfsmgmt:overrides'] = overrides
+    end
+    merged
   end
   class ZfsGetError < StandardError
   end
@@ -94,6 +258,8 @@ module ZfsMgmt
       'remote',
       'destination',
       'recv_state',
+      'excludes',
+      'overrides',
     ].map do |p|
       ['zfsmgmt',p].join(':')
     end
@@ -207,7 +373,7 @@ module ZfsMgmt
       zfs_obj = zfs
       snaps ||= zfs_obj.snapshots
     else
-      zfs_obj = ZfsMgmt::Zfs.from_zfs_props(zfs, merge_config_props(zfs, props))
+      zfs_obj = build_zfs_from_props(zfs, props)
     end
 
     minage = 0
@@ -293,7 +459,7 @@ module ZfsMgmt
         next
       end
       merged_props = merge_config_props(zfs_name, props)
-      zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, merged_props)
+      zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, merged_props, config_merged: !config.nil?)
       managed = true
       property_match.each do |k,v|
         matched = if k.to_s.start_with?('zfsmgmt:')
@@ -443,7 +609,7 @@ module ZfsMgmt
       zfs_obj = zfs
       snaps ||= zfs_obj.snapshots
     else
-      zfs_obj = ZfsMgmt::Zfs.from_zfs_props(zfs, merge_config_props(zfs, props))
+      zfs_obj = build_zfs_from_props(zfs, props)
     end
     zfs_name = zfs_obj.name
     sorted = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }
@@ -653,8 +819,8 @@ module ZfsMgmt
     volume = zfs_obj.volume?
     cli_exclude = options.key?(:exclude) ? options[:exclude] : options['exclude']
     cli_option  = options.key?(:option)  ? options[:option]  : options['option']
-    excludes  = cli_exclude.nil? ? config&.excludes : cli_exclude
-    overrides = cli_option.nil?  ? config&.override_options : cli_option
+    excludes  = resolve_excludes(zfs_obj, cli_exclude)
+    overrides = resolve_overrides(zfs_obj, cli_option).map { |k, v| "#{k}=#{v}" }
     [['-x', excludes], ['-o', overrides]].each do |flag, values|
       next unless values
 

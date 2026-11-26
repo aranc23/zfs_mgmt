@@ -41,12 +41,18 @@ RSpec.describe ZfsMgmt::Zfs do
         "recv_unmount",
         "recv_discard_first",
         "recv_force",
+        "excludes",
+        "overrides",
         "restic_backup",
         "restic_repository"
       )
       expect(props["strategy"]["enum"]).to eq(%w[oldest youngest])
       expect(props["recv_state"]["default"]).to eq(true)
       expect(props["send"]["type"]).to eq("boolean")
+      expect(props["excludes"]["type"]).to eq("array")
+      expect(props["excludes"]["items"]).to eq({ "type" => "string" })
+      expect(props["overrides"]["type"]).to eq("object")
+      expect(props["overrides"]["additionalProperties"]).to eq({ "type" => "string" })
     end
 
     it "applies sensible defaults and validates correctly" do
@@ -62,6 +68,9 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(zfs.send?).to eq(false)
       expect(zfs.volume?).to eq(false)
       expect(zfs.recv_state).to eq(true)
+      expect(zfs.excludes).to eq([])
+      expect(zfs.overrides).to eq({})
+      expect(zfs.override_options).to eq([])
       expect(zfs.restic_backup).to eq(false)
     end
 
@@ -80,6 +89,25 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(described_class.new(name: "tank/data", type: "snapshot")).not_to be_valid
       expect(described_class.new(name: "tank/data", policy: "10y60m104w365d168h", minage: "7D", strategy: "youngest", type: "filesystem")).to be_valid
       expect(described_class.new(name: "tank/zvol", type: "volume")).to be_valid
+    end
+
+    it "validates excludes and overrides types and omits ** knockouts from override_options" do
+      expect(described_class.new(name: "tank/data", excludes: "mountpoint")).not_to be_valid
+      expect(described_class.new(name: "tank/data", excludes: [123])).not_to be_valid
+
+      arr_ovr = described_class.new(name: "tank/data", overrides: [{ "canmount" => "off" }])
+      expect(arr_ovr).not_to be_valid
+      expect(arr_ovr.errors[:overrides].join).to include('[zfs."tank/data".overrides]')
+
+      expect(described_class.new(name: "tank/data", overrides: { "canmount" => 123 })).not_to be_valid
+
+      valid_zfs = described_class.new(
+        name: "tank/data",
+        excludes: %w[mountpoint sharenfs],
+        overrides: { "canmount" => "**", "readonly" => "on" }
+      )
+      expect(valid_zfs).to be_valid
+      expect(valid_zfs.override_options).to eq(["readonly=on"])
     end
   end
 
@@ -312,8 +340,38 @@ RSpec.describe ZfsMgmt::Zfs do
       props["zfsmgmt:strategy"] = "oldest"
       props["zfsmgmt:policy"] = "7d"
       props["zfsmgmt:minage"] = "1h"
+      props["zfsmgmt:excludes"] = "mountpoint,sharenfs"
+      props["zfsmgmt:overrides"] = "canmount=noauto,readonly=on"
 
       described_class.from_zfs_props("tank/app", props)
+    end
+
+    context "excludes and overrides parsing" do
+      it "parses comma-separated zfsmgmt:excludes and zfsmgmt:overrides" do
+        zfs = described_class.from_zfs_props("tank/app", {
+          "zfsmgmt:excludes" => " mountpoint , sharenfs , **quota ",
+          "zfsmgmt:overrides" => " canmount=noauto , sharenfs=rw=10.0.0.0/8 , readonly=** , **atime "
+        })
+        expect(zfs.excludes).to eq(%w[mountpoint sharenfs **quota])
+        expect(zfs.overrides).to eq({
+          "canmount" => "noauto",
+          "sharenfs" => "rw=10.0.0.0/8",
+          "readonly" => "**",
+          "atime" => "**"
+        })
+        expect(zfs.override_options).to eq(["canmount=noauto", "sharenfs=rw=10.0.0.0/8"])
+      end
+
+      it "supports bare ** knockout in zfsmgmt:overrides and warns on malformed entries" do
+        expect($logger).to receive(:warn).with("ignoring malformed override 'bogus' on tank/app")
+        zfs = described_class.from_zfs_props("tank/app", {
+          "zfsmgmt:overrides" => "**,bogus,compression=zstd"
+        })
+        expect(zfs.overrides).to eq({
+          "**" => "**",
+          "compression" => "zstd"
+        })
+      end
     end
   end
 

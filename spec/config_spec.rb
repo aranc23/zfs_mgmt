@@ -17,7 +17,7 @@ RSpec.describe ZfsMgmt::Config do
       expect(props["overrides"]["additionalProperties"]).to eq({ "type" => "string" })
       expect(props["zfs"]["type"]).to eq("object")
       expect(props["zfs"]["additionalProperties"]["type"]).to eq("object")
-      expect(props["zfs"]["additionalProperties"]["properties"].keys).to include("send", "destination", "remote")
+      expect(props["zfs"]["additionalProperties"]["properties"].keys).to include("send", "destination", "remote", "excludes", "overrides")
     end
 
     it "applies sensible defaults and validates valid configs" do
@@ -29,7 +29,7 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg.zfs).to eq({})
     end
 
-    it "rejects invalid overrides values and non-Hash overrides" do
+    it "rejects invalid overrides values, non-Hash overrides, and invalid excludes" do
       non_hash = described_class.from_hash("overrides" => ["canmount=noauto"])
       expect(non_hash).not_to be_valid
       expect(non_hash.errors[:overrides]).not_to be_empty
@@ -37,6 +37,20 @@ RSpec.describe ZfsMgmt::Config do
       bad_val = described_class.from_hash("overrides" => { "canmount" => 123 })
       expect(bad_val).not_to be_valid
       expect(bad_val.errors[:overrides]).not_to be_empty
+
+      bad_excl = described_class.from_hash("excludes" => "mountpoint")
+      expect(bad_excl).not_to be_valid
+      expect(bad_excl.errors[:excludes]).not_to be_empty
+
+      bad_excl_elem = described_class.from_hash("excludes" => [123])
+      expect(bad_excl_elem).not_to be_valid
+      expect(bad_excl_elem.errors[:excludes]).not_to be_empty
+    end
+
+    it "omits ** knockout entries from override_options" do
+      cfg = described_class.from_hash("overrides" => { "canmount" => "**", "readonly" => "on" })
+      expect(cfg).to be_valid
+      expect(cfg.override_options).to eq(["readonly=on"])
     end
 
     it "rejects invalid nested Zfs properties" do
@@ -149,6 +163,66 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg).not_to be_valid
       expect(cfg.errors[:zfs].join).to include("pool/zfs/zfs2")
       expect(cfg.errors[:zfs].join).to include("must be a Zfs configuration table")
+    end
+
+    it "loads per-zfs excludes and [zfs.\"dataset\".overrides] from TOML files and rejects [[zfs.\"dataset\".overrides]]" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "10-per-zfs.toml"), <<~TOML)
+          excludes = ["mountpoint"]
+
+          [overrides]
+          canmount = "noauto"
+          readonly = "on"
+
+          [zfs."pool/zfs"]
+          excludes = ["sharenfs"]
+
+          [zfs."pool/zfs".overrides]
+          compression = "lz4"
+
+          [zfs."pool/zfs/sub"]
+          excludes = ["**sharenfs", "quota"]
+
+          [zfs."pool/zfs/sub".overrides]
+          canmount = "**"
+          atime = "off"
+        TOML
+
+        cfg = described_class.load_dir(dir)
+        expect(cfg).to be_valid
+        expect(cfg.zfs["pool/zfs"].excludes).to eq(["sharenfs"])
+        expect(cfg.zfs["pool/zfs"].overrides).to eq({ "compression" => "lz4" })
+        expect(cfg.zfs["pool/zfs/sub"].excludes).to eq(["**sharenfs", "quota"])
+        expect(cfg.zfs["pool/zfs/sub"].overrides).to eq({
+          "compression" => "lz4",
+          "canmount" => "**",
+          "atime" => "off"
+        })
+      end
+
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "10-bad.toml"), <<~TOML)
+          [zfs."pool/zfs/zfs2"]
+          send = true
+
+          [[zfs."pool/zfs/zfs2".overrides]]
+          stuff = "nonsense"
+        TOML
+
+        expect($logger).to receive(:error).with(/invalid configuration.*pool\/zfs\/zfs2.*overrides must be a table/)
+        expect { described_class.load_dir(dir) }.to raise_error(
+          ZfsMgmt::ConfigError,
+          /invalid configuration.*pool\/zfs\/zfs2.*overrides must be a table/
+        )
+      end
+
+      bad_per_zfs_excl = described_class.from_hash("zfs" => { "pool/ds" => { "excludes" => "mountpoint" } })
+      expect(bad_per_zfs_excl).not_to be_valid
+      expect(bad_per_zfs_excl.errors[:zfs].join).to include("pool/ds: excludes must be an array of strings")
+
+      bad_per_zfs_ovr = described_class.from_hash("zfs" => { "pool/ds" => { "overrides" => { "canmount" => 123 } } })
+      expect(bad_per_zfs_ovr).not_to be_valid
+      expect(bad_per_zfs_ovr.errors[:zfs].join).to include("pool/ds: overrides.canmount: property and value must be strings")
     end
 
     it "raises ConfigError and logs an error on invalid TOML syntax" do
@@ -281,6 +355,40 @@ RSpec.describe ZfsMgmt::Config do
         "zfsmgmt:remote@source" => "local"
       })
     end
+
+    it "merges per-dataset excludes and overrides down the hierarchy while preserving knockout markers" do
+      cfg = described_class.from_hash(
+        "zfs" => {
+          "pool" => {
+            "excludes" => %w[mountpoint sharenfs],
+            "overrides" => { "canmount" => "noauto", "readonly" => "on" }
+          },
+          "pool/child" => {
+            "excludes" => %w[**sharenfs quota],
+            "overrides" => { "readonly" => "**", "compression" => "zstd" }
+          }
+        }
+      )
+
+      expect(cfg.zfs_excludes_layers_for("pool/child/grand")).to eq([
+        %w[mountpoint sharenfs],
+        %w[**sharenfs quota]
+      ])
+      expect(cfg.zfs_overrides_layers_for("pool/child/grand")).to eq([
+        { "canmount" => "noauto", "readonly" => "on" },
+        { "readonly" => "**", "compression" => "zstd" }
+      ])
+
+      props = cfg.zfs_props_for("pool/child/grand")
+      expect(props["zfsmgmt:excludes"]).to eq(%w[mountpoint **sharenfs quota])
+      expect(props["zfsmgmt:excludes@source"]).to eq("inherited from pool/child")
+      expect(props["zfsmgmt:overrides"]).to eq({
+        "canmount" => "noauto",
+        "readonly" => "**",
+        "compression" => "zstd"
+      })
+      expect(props["zfsmgmt:overrides@source"]).to eq("inherited from pool/child")
+    end
   end
 
   describe "examples/config.toml" do
@@ -297,6 +405,9 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg.zfs["tank"].policy).to eq("10y6m4w30d24h")
       expect(cfg.zfs["tank/data"].send_enabled).to eq(true)
       expect(cfg.zfs["tank/data"].manage).to eq(true)
+      expect(cfg.zfs["tank/data"].excludes).to eq(["quota"])
+      expect(cfg.zfs["tank/data"].overrides).to eq({ "canmount" => "**", "compression" => "zstd" })
+      expect(cfg.zfs["tank/data"].override_options).to eq(["compression=zstd"])
       expect(cfg.zfs["tank/archive"].restic_backup).to eq(true)
       expect(cfg.zfs["tank/archive"].snapshot_recursive).to eq(true)
     end
