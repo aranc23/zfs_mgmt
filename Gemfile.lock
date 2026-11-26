@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    zfs_mgmt (0.7.2)
+    zfs_mgmt (0.8.0)
       deep_merge
       easy_talk
       filesize (~> 0.2)
