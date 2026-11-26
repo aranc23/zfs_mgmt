@@ -150,6 +150,17 @@ module ZfsMgmt
             next
           end
 
+          if k == 'destination'
+            if v.is_a?(String)
+              result['zfsmgmt:destination'] = v
+              result['zfsmgmt:destination@source'] = source
+            elsif v.is_a?(Array) && v.all? { |item| item.is_a?(String) }
+              result['zfsmgmt:destination'] = v.dup
+              result['zfsmgmt:destination@source'] = source
+            end
+            next
+          end
+
           prop_key = (k == 'send_enabled' ? 'send' : k)
           next unless ZfsMgmt::Zfs::VALID_ZFS_PROPS.include?("zfsmgmt:#{prop_key}")
 
@@ -211,6 +222,13 @@ module ZfsMgmt
               { 'type' => 'string', 'enum' => %w[local] }
             ],
             'default' => false
+          }
+          zfs_props['destination'] = {
+            'description' => 'Destination ZFS dataset path(s) for zfs send/recv, optionally prefixed with [user@]host: (e.g. backup/tank, user@host:backup/tank, or an array of destinations)',
+            'oneOf' => [
+              { 'type' => 'string' },
+              { 'type' => 'array', 'items' => { 'type' => 'string' } }
+            ]
           }
         end
       end
@@ -350,6 +368,13 @@ module ZfsMgmt
         end
         raw_entry = @raw_zfs[dataset_name]
         if raw_entry
+          if raw_entry.key?('destination')
+            raw_dest = raw_entry['destination']
+            valid_dest = raw_dest.is_a?(String) || (raw_dest.is_a?(Array) && raw_dest.all? { |item| item.is_a?(String) })
+            unless valid_dest
+              errors.add(:zfs, "#{dataset_name}: destination must be a string or an array of strings")
+            end
+          end
           if raw_entry.key?('excludes')
             raw_excl = raw_entry['excludes']
             unless raw_excl.is_a?(Array) && raw_excl.all? { |item| item.is_a?(String) }

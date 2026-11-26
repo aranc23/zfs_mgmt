@@ -111,7 +111,7 @@ module ZfsMgmt
       property :remote, String, optional: true,
                description: 'DEPRECATED: Remote SSH target for zfs recv (specify remote in destination instead, e.g. user@host:pool/dataset)'
       property :destination, String, optional: true,
-               description: 'Destination ZFS dataset path for zfs send/recv, optionally prefixed with [user@]host: (e.g. backup/tank or user@host:backup/tank)'
+               description: 'Destination ZFS dataset path(s) for zfs send/recv, optionally prefixed with [user@]host: (string or array of strings, e.g. backup/tank or ["backup/tank", "user@host:backup/tank"])'
 
       property :send_intermediary, T::Boolean, optional: true, default: false,
                description: 'Pass -I (intermediary snapshots) to zfs send'
@@ -156,6 +156,7 @@ module ZfsMgmt
                description: 'Target restic repository for backups'
     end
 
+    validate :validate_destination
     validate :validate_excludes
     validate :validate_overrides
 
@@ -164,23 +165,56 @@ module ZfsMgmt
       @snapshots = attrs.delete(:snapshots) if attrs.key?(:snapshots)
       @destination_relative_path = attrs.delete(:destination_relative_path) if attrs.key?(:destination_relative_path)
       @destination_base = attrs.delete(:destination_base) if attrs.key?(:destination_base)
-      @destination_explicit_remote = if attrs.key?(:destination_explicit_remote)
-                                       attrs.delete(:destination_explicit_remote)
-                                     else
-                                       ZfsMgmt.parse_destination(attrs[:destination]).first
-                                     end
+      @destination_entries = attrs.delete(:destination_entries) if attrs.key?(:destination_entries)
+      explicit_remote_provided = attrs.key?(:destination_explicit_remote)
+      @destination_explicit_remote = attrs.delete(:destination_explicit_remote) if explicit_remote_provided
       @config_merged = attrs.key?(:config_merged) ? !!attrs.delete(:config_merged) : false
       if attrs.key?(:send) && !attrs.key?(:send_enabled)
         attrs[:send_enabled] = attrs.delete(:send)
       end
       @provided_attributes = attrs.keys.to_set
+
+      raw_dest = attrs[:destination]
+      valid_dest_input = raw_dest.is_a?(String) || (raw_dest.is_a?(Array) && raw_dest.all? { |item| item.is_a?(String) })
+      if @destination_entries.nil? && valid_dest_input
+        parsed_dests = ZfsMgmt.parse_destinations(raw_dest)
+        @destination_entries = parsed_dests.map do |dest|
+          {
+            resolved: dest,
+            base: dest,
+            explicit_remote: ZfsMgmt.parse_destination(dest).first
+          }
+        end
+      end
+
+      unless explicit_remote_provided
+        @destination_explicit_remote = (@destination_entries && @destination_entries.length == 1) ? @destination_entries.first[:explicit_remote] : nil
+      end
+
       if attrs.key?(:remote) && !attrs[:remote].nil? && !attrs[:remote].to_s.empty?
         remote_val = attrs[:remote].to_s
         ctx = attrs[:name].nil? || attrs[:name].to_s.empty? ? nil : attrs[:name].to_s
         ZfsMgmt.warn_deprecated_remote(ctx)
-        if attrs[:destination] && !attrs[:destination].to_s.empty? && @destination_explicit_remote.nil?
-          _, dest_path = ZfsMgmt.parse_destination(attrs[:destination])
-          attrs[:destination] = ZfsMgmt.format_destination(remote_val, dest_path)
+        if @destination_entries && !@destination_entries.empty?
+          @destination_entries = @destination_entries.map do |entry|
+            if entry[:explicit_remote].nil?
+              _, resolved_path = ZfsMgmt.parse_destination(entry[:resolved])
+              _, base_path = ZfsMgmt.parse_destination(entry[:base])
+              {
+                resolved: ZfsMgmt.format_destination(remote_val, resolved_path),
+                base: ZfsMgmt.format_destination(remote_val, base_path),
+                explicit_remote: nil
+              }
+            else
+              entry
+            end
+          end
+          resolved_list = @destination_entries.map { |e| e[:resolved] }
+          attrs[:destination] = (raw_dest.is_a?(Array) || resolved_list.length > 1) ? resolved_list : resolved_list.first
+          if @destination_base
+            base_list = @destination_entries.map { |e| e[:base] }
+            @destination_base = (raw_dest.is_a?(Array) || base_list.length > 1) ? base_list : base_list.first
+          end
         end
       end
       attrs[:excludes] = [] unless attrs.key?(:excludes)
@@ -239,12 +273,30 @@ module ZfsMgmt
       snapshots
     end
 
+    def destinations
+      return @destination_entries.map { |e| e[:resolved] } if @destination_entries
+
+      ZfsMgmt.parse_destinations(destination)
+    end
+
+    def destination_entries
+      return @destination_entries if @destination_entries
+
+      ZfsMgmt.parse_destinations(destination).map do |dest|
+        {
+          resolved: dest,
+          base: dest,
+          explicit_remote: ZfsMgmt.parse_destination(dest).first
+        }
+      end
+    end
+
     def destination_remote
-      ZfsMgmt.parse_destination(destination).first
+      ZfsMgmt.parse_destination(destinations.first).first
     end
 
     def destination_path
-      ZfsMgmt.parse_destination(destination).last
+      ZfsMgmt.parse_destination(destinations.first).last
     end
 
     def resolved_destination(override = nil)
@@ -261,14 +313,24 @@ module ZfsMgmt
       @destination_base || destination
     end
 
-    def discard_first_destination(override = nil)
-      base = base_destination(override)
+    def discard_first_for(base)
       return nil unless base
 
       base_remote, base_path = ZfsMgmt.parse_destination(base)
       rel = name.include?('/') ? name.split('/', 2).last : nil
       joined = rel && !rel.empty? ? File.join(base_path, rel) : base_path
       ZfsMgmt.format_destination(base_remote, joined)
+    end
+
+    def discard_first_destination(override = nil)
+      base = base_destination(override)
+      return nil unless base
+
+      if base.is_a?(Array)
+        base.map { |b| discard_first_for(b) }
+      else
+        discard_first_for(base)
+      end
     end
 
     def self.warn_unknown_zfs_props(name, props)
@@ -338,21 +400,32 @@ module ZfsMgmt
 
       # Interpret zfsmgmt:destination taking @source into account
       if props.key?('zfsmgmt:destination')
-        dest_base = props['zfsmgmt:destination']
+        raw_dest_prop = props['zfsmgmt:destination']
+        dest_bases = ZfsMgmt.parse_destinations(raw_dest_prop)
         dest_src = props['zfsmgmt:destination@source']
-        explicit_remote, base_path = ZfsMgmt.parse_destination(dest_base)
         prop_remote = props['zfsmgmt:remote']
-        effective_remote = explicit_remote || (prop_remote && !prop_remote.to_s.empty? ? prop_remote : nil)
+        prop_remote = nil if prop_remote && prop_remote.to_s.empty?
         rel = if dest_src == 'local'
                 File.basename(name)
               elsif dest_src && (m = /\Ainherited from (.+)\z/.match(dest_src))
                 File.join(File.basename(m[1]), name.sub(m[1], ''))
               end
-        if rel
-          attrs[:destination] = ZfsMgmt.format_destination(effective_remote, File.join(base_path, rel))
+        if rel && !dest_bases.empty?
+          entries = dest_bases.map do |dest_base|
+            explicit_remote, base_path = ZfsMgmt.parse_destination(dest_base)
+            effective_remote = explicit_remote || prop_remote
+            {
+              resolved: ZfsMgmt.format_destination(effective_remote, File.join(base_path, rel)),
+              base: ZfsMgmt.format_destination(effective_remote, base_path),
+              explicit_remote: explicit_remote
+            }
+          end
+          as_array = raw_dest_prop.is_a?(Array) || entries.length > 1
+          attrs[:destination] = as_array ? entries.map { |e| e[:resolved] } : entries.first[:resolved]
+          attrs[:destination_base] = as_array ? entries.map { |e| e[:base] } : entries.first[:base]
+          attrs[:destination_explicit_remote] = entries.length == 1 ? entries.first[:explicit_remote] : nil
+          attrs[:destination_entries] = entries
           attrs[:destination_relative_path] = rel
-          attrs[:destination_base] = ZfsMgmt.format_destination(effective_remote, base_path)
-          attrs[:destination_explicit_remote] = explicit_remote
         end
       end
 
@@ -384,6 +457,15 @@ module ZfsMgmt
     end
 
     private
+
+    def validate_destination
+      return if destination.nil?
+
+      valid = destination.is_a?(String) || (destination.is_a?(Array) && destination.all? { |item| item.is_a?(String) })
+      return if valid
+
+      errors.add(:destination, 'must be a string or an array of strings')
+    end
 
     def validate_excludes
       return if excludes.nil?

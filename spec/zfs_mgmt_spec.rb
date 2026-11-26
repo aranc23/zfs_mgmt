@@ -147,36 +147,70 @@ RSpec.describe ZfsMgmt do
       end
     end
 
-    it "records send state as a JSON hash string in PStore and overwrites previous entry" do
+    it "records send state keyed by source and destination in PStore and overwrites matching entry" do
       ts1 = 1_700_000_000
       ts2 = 1_700_003_600
       status_fail = instance_double(Process::Status, exitstatus: 1)
       status_ok = instance_double(Process::Status, exitstatus: 0)
 
-      ZfsMgmt.record_send_state("zpool/zfs/zfssub", status_fail, timestamp: ts1)
+      ZfsMgmt.record_send_state("zpool/zfs/zfssub", status_fail, destination: "backup/pool/zfssub", timestamp: ts1)
 
+      key = "zpool/zfs/zfssub -> backup/pool/zfssub"
       store = PStore.new(@db_path)
-      raw = store.transaction(true) { store["zpool/zfs/zfssub"] }
+      raw = store.transaction(true) { store[key] }
       expect(raw).to be_a(String)
-      expect(JSON.parse(raw)).to eq({ "timestamp" => ts1, "exit" => 1 })
+      expect(JSON.parse(raw)).to eq({
+        "source" => "zpool/zfs/zfssub",
+        "destination" => "backup/pool/zfssub",
+        "timestamp" => ts1,
+        "exit" => 1
+      })
 
-      ZfsMgmt.record_send_state("zpool/zfs/zfssub", status_ok, timestamp: ts2)
+      ZfsMgmt.record_send_state("zpool/zfs/zfssub", status_ok, destination: "backup/pool/zfssub", timestamp: ts2)
+      ZfsMgmt.record_send_state("zpool/zfs/zfssub", status_fail, destination: "host2:offsite/zfssub", timestamp: ts2)
       entries = ZfsMgmt.send_state_entries
-      expect(entries["zpool/zfs/zfssub"]).to eq({ "timestamp" => ts2, "exit" => 0 })
+      expect(entries[key]).to eq({
+        "source" => "zpool/zfs/zfssub",
+        "destination" => "backup/pool/zfssub",
+        "timestamp" => ts2,
+        "exit" => 0
+      })
+      expect(entries["zpool/zfs/zfssub -> host2:offsite/zfssub"]).to eq({
+        "source" => "zpool/zfs/zfssub",
+        "destination" => "host2:offsite/zfssub",
+        "timestamp" => ts2,
+        "exit" => 1
+      })
     end
 
-    it "deletes a single entry with send_state_delete" do
-      ZfsMgmt.record_send_state("tank/a", 0, timestamp: 1_700_000_000)
-      ZfsMgmt.record_send_state("tank/b", 1, timestamp: 1_700_000_100)
+    it "deletes a specific (source, destination) entry or all entries for a source with send_state_delete" do
+      ZfsMgmt.record_send_state("tank/a", 0, destination: "dest1/a", timestamp: 1_700_000_000)
+      ZfsMgmt.record_send_state("tank/a", 0, destination: "dest2/a", timestamp: 1_700_000_050)
+      ZfsMgmt.record_send_state("tank/b", 1, destination: "dest1/b", timestamp: 1_700_000_100)
+
+      ZfsMgmt.send_state_delete("tank/a", "dest1/a")
+      expect(ZfsMgmt.send_state_entries.keys).to eq(["tank/a -> dest2/a", "tank/b -> dest1/b"])
 
       ZfsMgmt.send_state_delete("tank/a")
-      entries = ZfsMgmt.send_state_entries
-      expect(entries.keys).to eq(["tank/b"])
+      expect(ZfsMgmt.send_state_entries.keys).to eq(["tank/b -> dest1/b"])
+    end
+
+    it "filters entries by source or destination and reads legacy entries without source/destination fields" do
+      store = ZfsMgmt.send_state_store(@db_path)
+      store.transaction do
+        store["legacy/ds"] = JSON.generate({ "timestamp" => 1_700_000_000, "exit" => 0 })
+      end
+      ZfsMgmt.record_send_state("tank/a", 0, destination: "backup/a", timestamp: 1_700_000_100)
+      ZfsMgmt.record_send_state("tank/a", 1, destination: "offsite/a", timestamp: 1_700_000_200)
+
+      all = ZfsMgmt.send_state_entries
+      expect(all["legacy/ds"]).to eq({ "source" => "legacy/ds", "timestamp" => 1_700_000_000, "exit" => 0 })
+      expect(ZfsMgmt.send_state_entries(filter: "offsite").keys).to eq(["tank/a -> offsite/a"])
     end
 
     it "wipes all entries with send_state_wipe" do
-      ZfsMgmt.record_send_state("tank/a", 0, timestamp: 1_700_000_000)
-      ZfsMgmt.record_send_state("tank/b", 1, timestamp: 1_700_000_100)
+      ZfsMgmt.record_send_state("tank/a", 0, destination: "dest1/a", timestamp: 1_700_000_000)
+      ZfsMgmt.record_send_state("tank/b", 1, destination: "dest1/b", timestamp: 1_700_000_100)
 
       ZfsMgmt.send_state_wipe
       expect(ZfsMgmt.send_state_entries).to be_empty
@@ -189,31 +223,33 @@ RSpec.describe ZfsMgmt do
         allow(Time).to receive(:now).and_return(Time.at(now))
       end
 
-      it "prints a table of values in the db when check is false" do
+      it "prints a table of source, destination, timestamp, and exit when check is false" do
         ts = now - 3600
-        ZfsMgmt.record_send_state("zpool/zfs/zfssub", 0, timestamp: ts)
+        ZfsMgmt.record_send_state("zpool/zfs/zfssub", 0, destination: "backup/pool/zfssub", timestamp: ts)
 
         output = capture_stdout do
           ZfsMgmt.send_state_show(check: false)
         end
 
-        expect(output).to include("zfs")
+        expect(output).to include("source")
+        expect(output).to include("destination")
         expect(output).to include("timestamp")
         expect(output).to include("exit")
         expect(output).to include("zpool/zfs/zfssub")
+        expect(output).to include("backup/pool/zfssub")
         expect(output).to include(ZfsMgmt.local_epoch_to_datetime(ts).to_s)
       end
 
-      it "prints Checkmk local check output with OK (0), WARN (1 >36h), and CRIT (2 >72h or exit != 0)" do
+      it "prints Checkmk local check output with source and destination and OK/WARN/CRIT states" do
         ts_ok = now - (10 * 3600)         # 10h ago -> OK (0)
         ts_warn = now - (37 * 3600)       # 37h ago (> 36h) -> WARN (1)
         ts_crit_age = now - (73 * 3600)   # 73h ago (> 72h) -> CRIT (2)
         ts_crit_exit = now - (1 * 3600)   # 1h ago, exit 1 -> CRIT (2)
 
-        ZfsMgmt.record_send_state("tank/ok", 0, timestamp: ts_ok)
-        ZfsMgmt.record_send_state("tank/warn", 0, timestamp: ts_warn)
-        ZfsMgmt.record_send_state("tank/crit_age", 0, timestamp: ts_crit_age)
-        ZfsMgmt.record_send_state("tank/crit_exit", 1, timestamp: ts_crit_exit)
+        ZfsMgmt.record_send_state("tank/ok", 0, destination: "backup/ok", timestamp: ts_ok)
+        ZfsMgmt.record_send_state("tank/warn", 0, destination: "drhost:backup/warn", timestamp: ts_warn)
+        ZfsMgmt.record_send_state("tank/crit_age", 0, destination: "backup/crit_age", timestamp: ts_crit_age)
+        ZfsMgmt.record_send_state("tank/crit_exit", 1, destination: "backup/crit_exit", timestamp: ts_crit_exit)
 
         output = capture_stdout do
           ZfsMgmt.send_state_show(check: true)
@@ -221,10 +257,10 @@ RSpec.describe ZfsMgmt do
 
         lines = output.strip.split("\n")
         expect(lines.length).to eq(4)
-        expect(lines).to include("0 \"zfs_send tank/ok\" age=36000;129600;259200 last send #{ZfsMgmt.local_epoch_to_datetime(ts_ok)} exit 0")
-        expect(lines).to include("1 \"zfs_send tank/warn\" age=133200;129600;259200 last send #{ZfsMgmt.local_epoch_to_datetime(ts_warn)} exit 0")
-        expect(lines).to include("2 \"zfs_send tank/crit_age\" age=262800;129600;259200 last send #{ZfsMgmt.local_epoch_to_datetime(ts_crit_age)} exit 0")
-        expect(lines).to include("2 \"zfs_send tank/crit_exit\" age=3600;129600;259200 last send #{ZfsMgmt.local_epoch_to_datetime(ts_crit_exit)} exit 1")
+        expect(lines).to include("0 \"zfs_send tank/ok -> backup/ok\" age=36000;129600;259200 last send #{ZfsMgmt.local_epoch_to_datetime(ts_ok)} exit 0")
+        expect(lines).to include("1 \"zfs_send tank/warn -> drhost:backup/warn\" age=133200;129600;259200 last send #{ZfsMgmt.local_epoch_to_datetime(ts_warn)} exit 0")
+        expect(lines).to include("2 \"zfs_send tank/crit_age -> backup/crit_age\" age=262800;129600;259200 last send #{ZfsMgmt.local_epoch_to_datetime(ts_crit_age)} exit 0")
+        expect(lines).to include("2 \"zfs_send tank/crit_exit -> backup/crit_exit\" age=3600;129600;259200 last send #{ZfsMgmt.local_epoch_to_datetime(ts_crit_exit)} exit 1")
       end
     end
 
@@ -243,7 +279,7 @@ RSpec.describe ZfsMgmt do
         }
       end
 
-      it "records completion time and exit code when an incremental zfs send executes" do
+      it "records completion time and exit code keyed by source and destination when an incremental zfs send executes" do
         allow(ZfsMgmt).to receive(:zfsget).with(zfs: "backup/pool/fs", command_prefix: []).and_return({
           "backup/pool/fs" => {}
         })
@@ -262,9 +298,11 @@ RSpec.describe ZfsMgmt do
         ZfsMgmt.zfs_send({ mbuffer: true }, zfs, props, snaps)
 
         entries = ZfsMgmt.send_state_entries
-        expect(entries).to have_key("tank/fs")
-        expect(entries["tank/fs"]["exit"]).to eq(0)
-        expect(entries["tank/fs"]["timestamp"]).to be_a(Integer)
+        expect(entries).to have_key("tank/fs -> backup/pool/fs")
+        expect(entries["tank/fs -> backup/pool/fs"]["source"]).to eq("tank/fs")
+        expect(entries["tank/fs -> backup/pool/fs"]["destination"]).to eq("backup/pool/fs")
+        expect(entries["tank/fs -> backup/pool/fs"]["exit"]).to eq(0)
+        expect(entries["tank/fs -> backup/pool/fs"]["timestamp"]).to be_a(Integer)
       end
 
       it "does not record state when most recent snapshot already exists on remote" do
@@ -318,9 +356,12 @@ RSpec.describe ZfsMgmt do
       described_class.start(["state", "--check"])
     end
 
-    it "dispatches `send state delete <zfs>` to send_state_delete" do
+    it "dispatches `send state delete <source>` and `send state delete <source> <dest>` to send_state_delete" do
       expect(ZfsMgmt).to receive(:send_state_delete).with("zpool/zfs/zfssub")
       described_class.start(["state", "delete", "zpool/zfs/zfssub"])
+
+      expect(ZfsMgmt).to receive(:send_state_delete).with("zpool/zfs/zfssub", "backup/pool/zfssub")
+      described_class.start(["state", "delete", "zpool/zfs/zfssub", "backup/pool/zfssub"])
     end
 
     it "dispatches `send state wipe` to send_state_wipe" do
@@ -1489,14 +1530,209 @@ RSpec.describe ZfsMgmt do
 
       ZfsMgmt.zfs_send(opts, zfs, props, snaps)
     end
+
+    it "sends to multiple comma-separated destinations independently with isolated SSH remotes and state DB entries" do
+      props = {
+        "zfsmgmt:destination" => "backup/pool, zfs_recv@drhost:offsite/pool",
+        "zfsmgmt:destination@source" => "local"
+      }
+      local_dest = "backup/pool/fs"
+      remote_dest = "offsite/pool/fs"
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: local_dest, command_prefix: []).and_return({
+        local_dest => {}
+      })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: local_dest,
+        types: ["snapshot"],
+        command_prefix: [],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{local_dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: remote_dest, command_prefix: ["ssh", "zfs_recv@drhost"]).and_return({
+        remote_dest => {}
+      })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: remote_dest,
+        types: ["snapshot"],
+        command_prefix: ["ssh", "zfs_recv@drhost"],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{remote_dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "zfs", "recv", "-s", "\"#{local_dest}\""
+      ]).ordered.and_return(status_ok)
+
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "ssh", "zfs_recv@drhost",
+        "'zfs recv -s \"#{remote_dest}\"'"
+      ]).ordered.and_return(status_ok)
+
+      ZfsMgmt.zfs_send({}, zfs, props, snaps)
+
+      entries = ZfsMgmt.send_state_entries
+      expect(entries.keys).to contain_exactly(
+        "tank/sub/fs -> backup/pool/fs",
+        "tank/sub/fs -> zfs_recv@drhost:offsite/pool/fs"
+      )
+      expect(entries["tank/sub/fs -> backup/pool/fs"]["exit"]).to eq(0)
+      expect(entries["tank/sub/fs -> zfs_recv@drhost:offsite/pool/fs"]["exit"]).to eq(0)
+    end
+
+    it "sends to multiple destinations from TOML config array and continues when one destination fails" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "zfs" => {
+          "tank/sub" => {
+            "destination" => ["drhost:offsite/dest", "backup/dest"]
+          }
+        }
+      )
+
+      remote_dest = "offsite/dest/sub/fs"
+      local_dest = "backup/dest/sub/fs"
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: remote_dest, command_prefix: ["ssh", "drhost"])
+        .and_raise(ZfsMgmt::ZfsGetError.new("ssh failed"))
+      expect($logger).to receive(:error).with("unable to check remote filesystem #{remote_dest}")
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: local_dest, command_prefix: []).and_return({
+        local_dest => {}
+      })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: local_dest,
+        types: ["snapshot"],
+        command_prefix: [],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{local_dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "zfs", "recv", "-s", "\"#{local_dest}\""
+      ]).and_return(status_ok)
+
+      ZfsMgmt.zfs_send({}, zfs, {}, snaps)
+
+      entries = ZfsMgmt.send_state_entries
+      expect(entries.keys).to eq(["tank/sub/fs -> backup/dest/sub/fs"])
+      expect(entries["tank/sub/fs -> backup/dest/sub/fs"]["exit"]).to eq(0)
+    end
+
+    it "supports multiple inherited destinations with discard_first and records failed exit status independently" do
+      props = {
+        "zfsmgmt:destination" => "backup/dest,drhost:offsite/dest",
+        "zfsmgmt:destination@source" => "inherited from tank",
+        "zfsmgmt:recv_discard_first" => "true"
+      }
+
+      check_local = "backup/dest/sub/fs"
+      recv_local = "backup/dest"
+      check_remote = "offsite/dest/sub/fs"
+      recv_remote = "offsite/dest"
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: check_local, command_prefix: []).and_return({
+        check_local => {}
+      })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: check_local,
+        types: ["snapshot"],
+        command_prefix: [],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{check_local}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      status_fail = instance_double(Process::Status, success?: false, exitstatus: 1)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "zfs", "recv", "-s", "-d", "\"#{recv_local}\""
+      ]).ordered.and_return(status_fail)
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: check_remote, command_prefix: ["ssh", "drhost"]).and_return({
+        check_remote => {}
+      })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: check_remote,
+        types: ["snapshot"],
+        command_prefix: ["ssh", "drhost"],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{check_remote}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "ssh", "drhost",
+        "'zfs recv -s -d \"#{recv_remote}\"'"
+      ]).ordered.and_return(status_ok)
+
+      ZfsMgmt.zfs_send({}, zfs, props, snaps)
+
+      entries = ZfsMgmt.send_state_entries
+      expect(entries["tank/sub/fs -> backup/dest/sub/fs"]["exit"]).to eq(1)
+      expect(entries["tank/sub/fs -> drhost:offsite/dest/sub/fs"]["exit"]).to eq(0)
+    end
+
+    it "applies CLI --remote only to destinations without an explicit host and warns once" do
+      props = {
+        "zfsmgmt:destination" => "backup/pool,explicit@host:offsite/pool",
+        "zfsmgmt:destination@source" => "local"
+      }
+      opts = Thor::CoreExt::HashWithIndifferentAccess.new(remote: "cli@host")
+
+      expect($logger).to receive(:warn).with(/remote option is deprecated \(CLI --remote\)/).once
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: "backup/pool/fs", command_prefix: ["ssh", "cli@host"]).and_return({
+        "backup/pool/fs" => {}
+      })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: "backup/pool/fs",
+        types: ["snapshot"],
+        command_prefix: ["ssh", "cli@host"],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "backup/pool/fs@snap2" => { "creation" => 2000, "userrefs" => 0 }
+      })
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: "offsite/pool/fs", command_prefix: ["ssh", "explicit@host"]).and_return({
+        "offsite/pool/fs" => {}
+      })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: "offsite/pool/fs",
+        types: ["snapshot"],
+        command_prefix: ["ssh", "explicit@host"],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "offsite/pool/fs@snap2" => { "creation" => 2000, "userrefs" => 0 }
+      })
+
+      ZfsMgmt.zfs_send(opts, zfs, props, snaps)
+    end
   end
 
-  describe ".parse_destination and .format_destination" do
+  describe ".parse_destination, .parse_destinations, and .format_destination" do
     it "parses local, hostname:path, and user@hostname:path destinations" do
       expect(ZfsMgmt.parse_destination(nil)).to eq([nil, nil])
       expect(ZfsMgmt.parse_destination("zpool/zfs/zfs2/etc")).to eq([nil, "zpool/zfs/zfs2/etc"])
       expect(ZfsMgmt.parse_destination("hostname:zpool/zfs/zfs2/etc")).to eq(["hostname", "zpool/zfs/zfs2/etc"])
       expect(ZfsMgmt.parse_destination("user@hostname:zpool/zfs/zfs2/etc")).to eq(["user@hostname", "zpool/zfs/zfs2/etc"])
+    end
+
+    it "parses comma-separated strings and arrays into deduplicated destination lists" do
+      expect(ZfsMgmt.parse_destinations(nil)).to eq([])
+      expect(ZfsMgmt.parse_destinations("")).to eq([])
+      expect(ZfsMgmt.parse_destinations("backup/a, drhost:offsite/a, backup/a")).to eq(["backup/a", "drhost:offsite/a"])
+      expect(ZfsMgmt.parse_destinations(["backup/a", " drhost:offsite/a ", ""])).to eq(["backup/a", "drhost:offsite/a"])
     end
 
     it "formats destinations with optional remote prefix" do

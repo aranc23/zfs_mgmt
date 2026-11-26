@@ -172,6 +172,8 @@ compression = "zstd"
 
 Dataset options configured in TOML inherit to child datasets (e.g. `tank` -> `tank/data`) with the same source semantics as `zfsmgmt:*` user properties.
 
+`destination` in `[zfs."pool/dataset"]` accepts either a single string or an array of strings (for example `destination = ["backup/tank", "zfs_recv@offsite.example.com:offsite/tank"]`) to send a dataset to multiple destinations.
+
 Unlike scalar options (where a higher-precedence source replaces lower ones), `excludes` and `overrides` are **merged** from lowest precedence (`zfsmgmt:excludes` / `zfsmgmt:overrides`) up through top-level config, per-dataset config (ancestor to child), and CLI `--exclude` / `--option` flags. To unset a value set at a lower precedence level, use the `**` knockout prefix:
 - In `overrides`: set `prop = "**"` in TOML (or `prop=**` / `**prop` on the CLI or `zfsmgmt:overrides`) to remove `prop` from lower levels, or `"**"` alone to clear all lower-level overrides.
 - In `excludes`: include `"**prop"` to remove `prop` from lower levels, or `"**"` to clear all lower-level excludes.
@@ -285,11 +287,18 @@ and prepends the remote host to `destination` only if `destination` does not
 already include a `hostname:` or `user@hostname:` prefix.
 
 ### zfsmgmt:destination
-Base destination ZFS dataset path for `zfs send`/`recv` (required for
+Base destination ZFS dataset path(s) for `zfs send`/`recv` (required for
 `zfsmgr send all`). Supports local and remote forms:
 - `zpool/zfs/zfs2` (local)
 - `hostname:zpool/zfs/zfs2` (remote via SSH)
 - `user@hostname:zpool/zfs/zfs2` (remote via SSH with user)
+
+Multiple destinations can be configured as a comma-separated list in the
+`zfsmgmt:destination` user property (for example
+`host1:backup/tank,backup2/tank`) or as a TOML array in `[zfs."<dataset>"]`
+(`destination = ["host1:backup/tank", "backup2/tank"]`). Each destination
+is sent independently and tracked separately by `(source, destination)` in
+the send state database.
 
 Path resolution rules:
 - When the property's ZFS source is `local`, the destination path

@@ -109,6 +109,13 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(valid_zfs).to be_valid
       expect(valid_zfs.override_options).to eq(["readonly=on"])
     end
+
+    it "validates destination accepts a string or array of strings and rejects other types" do
+      expect(described_class.new(name: "tank/data", destination: "backup/tank")).to be_valid
+      expect(described_class.new(name: "tank/data", destination: ["backup/tank", "host:offsite/tank"])).to be_valid
+      expect(described_class.new(name: "tank/data", destination: 123)).not_to be_valid
+      expect(described_class.new(name: "tank/data", destination: [123])).not_to be_valid
+    end
   end
 
   describe ".from_zfs_props" do
@@ -304,6 +311,53 @@ RSpec.describe ZfsMgmt::Zfs do
         expect(with_host.destination).to eq("zfs_recv@newhost:backup/pool/fs")
         expect(with_host.destination_remote).to eq("zfs_recv@newhost")
         expect(with_host.destination_explicit_remote).to eq("zfs_recv@newhost")
+      end
+
+      it "supports comma-separated zfsmgmt:destination for local and inherited sources" do
+        local_multi = described_class.from_zfs_props("tank/sub/fs", {
+          "zfsmgmt:destination" => "backup/pool, zfs_recv@drhost:offsite/pool",
+          "zfsmgmt:destination@source" => "local"
+        })
+        expect(local_multi.destination).to eq(["backup/pool/fs", "zfs_recv@drhost:offsite/pool/fs"])
+        expect(local_multi.destinations).to eq(["backup/pool/fs", "zfs_recv@drhost:offsite/pool/fs"])
+        expect(local_multi.base_destination).to eq(["backup/pool", "zfs_recv@drhost:offsite/pool"])
+        expect(local_multi.destination_entries).to eq([
+          { resolved: "backup/pool/fs", base: "backup/pool", explicit_remote: nil },
+          { resolved: "zfs_recv@drhost:offsite/pool/fs", base: "zfs_recv@drhost:offsite/pool", explicit_remote: "zfs_recv@drhost" }
+        ])
+
+        inherited_multi = described_class.from_zfs_props("tank/sub/fs", {
+          "zfsmgmt:destination" => "backup/dest,drhost:offsite/dest",
+          "zfsmgmt:destination@source" => "inherited from tank"
+        })
+        expect(inherited_multi.destinations).to eq(["backup/dest/tank/sub/fs", "drhost:offsite/dest/tank/sub/fs"])
+        expect(inherited_multi.base_destination).to eq(["backup/dest", "drhost:offsite/dest"])
+        expect(inherited_multi.discard_first_destination).to eq(["backup/dest/sub/fs", "drhost:offsite/dest/sub/fs"])
+      end
+
+      it "supports array destination in Zfs.new and from_zfs_props, applying deprecated remote only when host is omitted" do
+        direct = described_class.new(name: "tank/data", destination: ["backup/data", "drhost:offsite/data"])
+        expect(direct).to be_valid
+        expect(direct.destinations).to eq(["backup/data", "drhost:offsite/data"])
+        expect(direct.destination_entries).to eq([
+          { resolved: "backup/data", base: "backup/data", explicit_remote: nil },
+          { resolved: "drhost:offsite/data", base: "drhost:offsite/data", explicit_remote: "drhost" }
+        ])
+
+        expect($logger).to receive(:warn).with(/remote option is deprecated \(tank\/sub\/fs\)/)
+        multi_with_remote = described_class.from_zfs_props("tank/sub/fs", {
+          "zfsmgmt:remote" => "root@fallback",
+          "zfsmgmt:destination" => ["backup/pool", "explicit@host:offsite/pool"],
+          "zfsmgmt:destination@source" => "local"
+        })
+        expect(multi_with_remote.destinations).to eq([
+          "root@fallback:backup/pool/fs",
+          "explicit@host:offsite/pool/fs"
+        ])
+        expect(multi_with_remote.destination_entries).to eq([
+          { resolved: "root@fallback:backup/pool/fs", base: "root@fallback:backup/pool", explicit_remote: nil },
+          { resolved: "explicit@host:offsite/pool/fs", base: "explicit@host:offsite/pool", explicit_remote: "explicit@host" }
+        ])
       end
     end
 
