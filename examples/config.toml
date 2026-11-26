@@ -16,9 +16,14 @@
 # (e.g. 00-base.toml then 50-local.toml) and deep-merged, with later files replacing
 # earlier scalars, arrays, and dataset keys.
 #
-# Precedence: CLI options > config file values > ZFS dataset user properties (zfsmgmt:*).
+# Precedence: CLI options > per-dataset config (child > parent) > top-level config > ZFS dataset user properties (zfsmgmt:*).
 # Dataset options configured here also inherit to child datasets (e.g. tank -> tank/data)
 # with the same source semantics as ZFS user properties.
+#
+# excludes and overrides are merged across precedence layers (lowest to highest).
+# Use the "**" knockout prefix to unset a value from a lower precedence layer:
+#   - in excludes:  "**mountpoint" removes "mountpoint"; "**" clears all lower excludes
+#   - in overrides: canmount = "**" removes "canmount"; "**" clears all lower overrides
 
 # ---------------------------------------------------------------------------
 # Top-level zfs recv options (previously only available via CLI flags)
@@ -84,6 +89,12 @@ recv_drop_holds = false         # -h
 recv_unmount = true             # -u
 recv_discard_first = false      # -d (uses base destination as target)
 recv_force = false              # -F
+excludes = ["quota"]            # merged with top-level excludes and zfsmgmt:excludes
+
+# Per-dataset zfs recv property overrides (merged with top-level [overrides] and zfsmgmt:overrides)
+[zfs."tank/data".overrides]
+canmount = "**"                 # knock out top-level canmount = "noauto"
+compression = "zstd"
 
 # Child dataset with local overrides and restic backup settings
 [zfs."tank/archive"]

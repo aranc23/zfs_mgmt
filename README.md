@@ -140,11 +140,11 @@ https://github.com/aranc23/zfs_mgmt.
 
 Files are loaded in lexicographical `sort()` order (for example `00-base.toml` followed by `50-local.toml`) and deep-merged, with later files replacing earlier scalars, arrays, and per-dataset options.
 
-Precedence is: **CLI options > config file values > ZFS dataset user properties (`zfsmgmt:*`)**.
+Precedence is: **CLI options > per-dataset config (child > parent) > top-level config > ZFS dataset user properties (`zfsmgmt:*`)**.
 
 ### Format
 
-At the top level, `excludes` and `[overrides]` set default `zfs recv` `-x` and `-o` options. Per-dataset options are configured under `[zfs."pool/dataset"]` using single-bracket TOML tables (not double-bracket `[[zfs."pool/dataset"]]` array-of-tables syntax). Dataset names containing `/` (or other characters not allowed in TOML bare keys) must be quoted:
+At the top level, `excludes` and `[overrides]` set default `zfs recv` `-x` and `-o` options. Per-dataset options are configured under `[zfs."pool/dataset"]` using single-bracket TOML tables (not double-bracket `[[zfs."pool/dataset"]]` array-of-tables syntax). Per-dataset `excludes` and `[zfs."pool/dataset".overrides]` are also supported using single-bracket tables. Dataset names containing `/` (or other characters not allowed in TOML bare keys) must be quoted:
 
 ```toml
 #:schema https://raw.githubusercontent.com/aranc23/zfs_mgmt/master/schema/config.schema.json
@@ -164,9 +164,19 @@ snapshot = true
 send = true
 remote = "zfs_recv@backup.example.com"
 destination = "backup/tank"
+excludes = ["quota"]
+
+[zfs."tank/data".overrides]
+canmount = "**"
+compression = "zstd"
 ```
 
 Dataset options configured in TOML inherit to child datasets (e.g. `tank` -> `tank/data`) with the same source semantics as `zfsmgmt:*` user properties.
+
+Unlike scalar options (where a higher-precedence source replaces lower ones), `excludes` and `overrides` are **merged** from lowest precedence (`zfsmgmt:excludes` / `zfsmgmt:overrides`) up through top-level config, per-dataset config (ancestor to child), and CLI `--exclude` / `--option` flags. To unset a value set at a lower precedence level, use the `**` knockout prefix:
+- In `overrides`: set `prop = "**"` in TOML (or `prop=**` / `**prop` on the CLI or `zfsmgmt:overrides`) to remove `prop` from lower levels, or `"**"` alone to clear all lower-level overrides.
+- In `excludes`: include `"**prop"` to remove `prop` from lower levels, or `"**"` to clear all lower-level excludes.
+- A higher-precedence layer can re-add an exclude or override that was knocked out at an intermediate layer.
 
 See [examples/config.toml](examples/config.toml) for a full example and [schema/config.schema.json](schema/config.schema.json) for the JSON Schema (used by TOML editors/validators via the `#:schema` directive; regenerate with `bundle exec rake schema`).
 
@@ -342,6 +352,20 @@ stripping the first path element for remote existence/snapshot checks.
 
 ### zfsmgmt:recv_force (default: false)
 Boolean (`true`/`on`). Pass `-F` (force rollback) to `zfs recv`.
+
+### zfsmgmt:excludes
+Comma-separated list of ZFS properties to exclude on `zfs recv` (`-x`),
+for example `mountpoint,sharenfs`. Merged with top-level config,
+per-dataset config, and CLI `--exclude` (`-x`) options. Prefix a
+property with `**` (e.g. `**mountpoint`) to knock out an excluded
+property, or use `**` to clear lower-precedence excludes.
+
+### zfsmgmt:overrides
+Comma-separated list of `property=value` overrides to pass to `zfs recv`
+(`-o`), for example `canmount=noauto,readonly=on`. Merged with top-level
+config, per-dataset config, and CLI `--option` (`-o`) options. Use
+`property=**` (or `**property`) to knock out an override, or `**` to
+clear lower-precedence overrides.
 
 ### zfsmgmt:restic_backup
 boolean, send this zfs to restic

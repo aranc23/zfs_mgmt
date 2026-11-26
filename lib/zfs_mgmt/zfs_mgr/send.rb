@@ -26,8 +26,8 @@ class ZfsMgmt::ZfsMgr::Send < Thor
   method_option :noop, :aliases => :'-n', :desc => "pass -n (noop) option to zfs send", :type => :boolean
   method_option :unmount, :aliases => :'-u', :desc => "pass -u (unmount) option to zfs receive", :type => :boolean
   method_option :force, :aliases => :'-F', :desc => "pass -F (force) option to zfs receive", :type => :boolean
-  method_option :exclude, :aliases => :'-x', :desc => "passed to -x option of receive side", :type => :string, repeatable: true
-  method_option :option, :aliases => :'-o', :desc => "passed to -o option of receive side", :type => :string, repeatable: true
+  method_option :exclude, :aliases => :'-x', :desc => "passed to -x option of receive side (merged with config and zfsmgmt:excludes; prefix with ** to knock out)", :type => :string, repeatable: true
+  method_option :option, :aliases => :'-o', :desc => "passed to -o option of receive side (merged with config and zfsmgmt:overrides; use key=** or ** to knock out)", :type => :string, repeatable: true
   method_option :drop_holds, :desc => "pass the -h option to zfs recv, indicating holds should be ignored", :type => :boolean
   method_option :discard_first, :desc => "pass the -d option to zfs recv, discarding the first element of the send snapshot's file system name", :type => :boolean
   method_option :recv_state, :aliases => :'-s', :desc => "pass the -s option to zfs recv to save partial receive state for resuming (defaults to true unless disabled)", :type => :boolean

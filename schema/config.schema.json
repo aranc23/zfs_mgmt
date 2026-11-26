@@ -204,6 +204,20 @@
             "description": "Pass -F (force rollback) to zfs recv",
             "default": false
           },
+          "excludes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "ZFS properties to exclude on zfs recv (-x)"
+          },
+          "overrides": {
+            "type": "object",
+            "description": "ZFS property overrides to set on zfs recv (-o property=value)",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "restic_backup": {
             "type": "boolean",
             "description": "Whether restic backup is enabled for this dataset",

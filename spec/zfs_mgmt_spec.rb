@@ -472,7 +472,7 @@ RSpec.describe ZfsMgmt do
       ])
     end
 
-    it "uses config.excludes and config.overrides, allows CLI override, and filters volume-unsupported props" do
+    it "merges config.excludes and config.overrides with CLI options and supports ** knockouts" do
       ZfsMgmt.config = ZfsMgmt::Config.from_hash(
         "excludes" => %w[mountpoint sharenfs],
         "overrides" => { "canmount" => "off", "readonly" => "on" }
@@ -495,16 +495,128 @@ RSpec.describe ZfsMgmt do
       ])
 
       cli_opts = Thor::CoreExt::HashWithIndifferentAccess.new(
-        exclude: ["quota"],
-        option: ["compression=lz4"]
+        exclude: ["**sharenfs", "quota"],
+        option: ["canmount=**", "compression=lz4"]
       )
       cli_com = ZfsMgmt.zfs_recv_com(cli_opts, [], { "type" => "filesystem" }, "backup/pool/fs")
       expect(cli_com).to eq([
         "zfs", "recv", "-s",
-        "-x", "quota",
-        "-o", "compression=lz4",
+        "-x", "mountpoint", "-x", "quota",
+        "-o", "readonly=on", "-o", "compression=lz4",
         '"backup/pool/fs"'
       ])
+
+      clear_opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+        exclude: ["**", "quota"],
+        option: ["**", "compression=zstd"]
+      )
+      clear_com = ZfsMgmt.zfs_recv_com(clear_opts, [], { "type" => "filesystem" }, "backup/pool/fs")
+      expect(clear_com).to eq([
+        "zfs", "recv", "-s",
+        "-x", "quota",
+        "-o", "compression=zstd",
+        '"backup/pool/fs"'
+      ])
+    end
+
+    it "merges zfsmgmt:excludes and zfsmgmt:overrides across all precedence layers with ** knockouts" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "excludes" => %w[mountpoint sharenfs],
+        "overrides" => { "canmount" => "noauto", "readonly" => "on" },
+        "zfs" => {
+          "tank" => {
+            "excludes" => %w[sharesmb],
+            "overrides" => { "atime" => "off", "readonly" => "**" }
+          },
+          "tank/data" => {
+            "excludes" => %w[**sharenfs quota],
+            "overrides" => { "compression" => "zstd", "canmount" => "**" }
+          }
+        }
+      )
+
+      zfs_props = {
+        "type" => "filesystem",
+        "zfsmgmt:excludes" => "aclinherit,mountpoint",
+        "zfsmgmt:overrides" => "exec=off,atime=on,readonly=off"
+      }
+      zfs_obj = ZfsMgmt.build_zfs_from_props("tank/data/sub", zfs_props)
+      cli_opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+        exclude: ["**aclinherit", "recordsize"],
+        option: ["readonly=on", "exec=**"]
+      )
+
+      com = ZfsMgmt.zfs_recv_com(cli_opts, [], zfs_obj, "backup/tank/data/sub")
+      expect(com).to eq([
+        "zfs", "recv", "-s",
+        "-x", "mountpoint", "-x", "sharesmb", "-x", "quota", "-x", "recordsize",
+        "-o", "atime=off", "-o", "compression=zstd", "-o", "readonly=on",
+        '"backup/tank/data/sub"'
+      ])
+    end
+
+    it "filters volume-unsupported properties after merging across ZFS props, config, and CLI" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "excludes" => %w[mountpoint],
+        "overrides" => { "canmount" => "noauto" },
+        "zfs" => {
+          "tank/zvol" => {
+            "excludes" => %w[quota sharenfs],
+            "overrides" => { "readonly" => "on" }
+          }
+        }
+      )
+
+      zfs_obj = ZfsMgmt.build_zfs_from_props("tank/zvol", {
+        "type" => "volume",
+        "zfsmgmt:excludes" => "sharesmb",
+        "zfsmgmt:overrides" => "quota=10G,compression=lz4"
+      })
+      cli_opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+        exclude: ["canmount"],
+        option: ["mountpoint=none", "atime=off"]
+      )
+
+      com = ZfsMgmt.zfs_recv_com(cli_opts, [], zfs_obj, "backup/tank/zvol")
+      expect(com).to eq([
+        "zfs", "recv", "-s",
+        "-x", "sharesmb", "-x", "sharenfs",
+        "-o", "compression=lz4", "-o", "readonly=on", "-o", "atime=off",
+        '"backup/tank/zvol"'
+      ])
+    end
+  end
+
+  describe ".merge_excludes and .merge_overrides" do
+    it "merges excludes in order, deduplicates, and applies ** knockouts and re-additions" do
+      merged = ZfsMgmt.merge_excludes(
+        "mountpoint, sharenfs",
+        %w[sharenfs quota **mountpoint],
+        %w[mountpoint atime]
+      )
+      expect(merged).to eq(%w[sharenfs quota mountpoint atime])
+
+      cleared = ZfsMgmt.merge_excludes(%w[mountpoint sharenfs], %w[** quota])
+      expect(cleared).to eq(%w[quota])
+    end
+
+    it "merges overrides in order, preserves = in values, and handles ** knockouts" do
+      merged = ZfsMgmt.merge_overrides(
+        "sharenfs=rw=10.0.0.0/8,canmount=noauto,readonly=on",
+        { "canmount" => "**", "atime" => "off" },
+        ["readonly=**", "canmount=off"]
+      )
+      expect(merged).to eq({
+        "sharenfs" => "rw=10.0.0.0/8",
+        "atime" => "off",
+        "canmount" => "off"
+      })
+
+      cleared = ZfsMgmt.merge_overrides({ "a" => "1", "b" => "2" }, ["**", "c=3"])
+      expect(cleared).to eq({ "c" => "3" })
+
+      preserved = ZfsMgmt.merge_overrides({ "a" => "1" }, { "a" => "**", "b" => "2" }, strip_knockouts: false)
+      expect(preserved).to eq({ "a" => "**", "b" => "2" })
     end
   end
 
@@ -525,7 +637,9 @@ RSpec.describe ZfsMgmt do
         "zfsmgmt:send",
         "zfsmgmt:remote",
         "zfsmgmt:destination",
-        "zfsmgmt:recv_state"
+        "zfsmgmt:recv_state",
+        "zfsmgmt:excludes",
+        "zfsmgmt:overrides"
       )
       expect(props.all? { |p| p.start_with?("zfsmgmt:") }).to be(true)
     end
@@ -1211,6 +1325,52 @@ RSpec.describe ZfsMgmt do
         "zfs", "send", "-c", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
         "ssh", "cli@host",
         "'zfs recv -s -u -x mountpoint -o readonly=on \"#{dest}\"'"
+      ]).and_return(status_ok)
+
+      ZfsMgmt.zfs_send(opts, zfs, props, snaps)
+    end
+
+    it "applies merged per-zfs excludes and overrides with ** knockouts in .zfs_send" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "excludes" => %w[mountpoint sharenfs],
+        "overrides" => { "canmount" => "noauto", "readonly" => "on" },
+        "zfs" => {
+          "tank/sub/fs" => {
+            "destination" => "config/dest",
+            "excludes" => %w[**sharenfs quota],
+            "overrides" => { "canmount" => "**", "compression" => "zstd" }
+          }
+        }
+      )
+
+      props = {
+        "type" => "filesystem",
+        "zfsmgmt:excludes" => "sharesmb",
+        "zfsmgmt:overrides" => "atime=off"
+      }
+      dest = "config/dest/fs"
+
+      expect(ZfsMgmt).to receive(:zfsget).with(zfs: dest, command_prefix: []).and_return({ dest => {} })
+      expect(ZfsMgmt).to receive(:zfsget).with(
+        zfs: dest,
+        types: ["snapshot"],
+        command_prefix: [],
+        properties: ["creation", "userrefs"]
+      ).and_return({
+        "#{dest}@snap1" => { "creation" => 1000, "userrefs" => 0 }
+      })
+
+      opts = Thor::CoreExt::HashWithIndifferentAccess.new(
+        option: ["atime=**"]
+      )
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "zfs", "recv", "-s",
+        "-x", "sharesmb", "-x", "mountpoint", "-x", "quota",
+        "-o", "readonly=on", "-o", "compression=zstd",
+        "\"#{dest}\""
       ]).and_return(status_ok)
 
       ZfsMgmt.zfs_send(opts, zfs, props, snaps)

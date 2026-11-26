@@ -8,31 +8,6 @@ require 'zfs_mgmt/zfs'
 module ZfsMgmt
   class ConfigError < StandardError; end
 
-  class TypedHashBuilder
-    def initialize(_name, type, constraints = {})
-      @type = type
-      @constraints = constraints || {}
-    end
-
-    def build
-      schema = { type: 'object' }
-      schema[:description] = @constraints[:description] if @constraints[:description]
-      schema[:default] = @constraints[:default] if @constraints.key?(:default)
-      value_type = @type.respond_to?(:values) ? @type.values : nil
-      value_type = value_type.raw_type if value_type.respond_to?(:raw_type)
-      if value_type
-        schema[:additionalProperties] = EasyTalk::Property.new(:_value, value_type, {}).build
-      end
-      schema
-    end
-  end
-end
-
-unless EasyTalk::Builders::Registry.registered?('T::Types::TypedHash')
-  EasyTalk::Builders::Registry.register('T::Types::TypedHash', ZfsMgmt::TypedHashBuilder, collection: true)
-end
-
-module ZfsMgmt
   class Config
     include EasyTalk::Model
 
@@ -52,6 +27,7 @@ module ZfsMgmt
                description: 'Per-dataset ZFS configuration keyed by dataset name'
     end
 
+    validate :validate_excludes
     validate :validate_overrides
     validate :validate_zfs_entries
 
@@ -95,15 +71,46 @@ module ZfsMgmt
     def override_options
       return [] unless overrides.is_a?(Hash)
 
-      overrides.map { |k, v| "#{k}=#{v}" }
+      overrides.reject { |_k, v| v == ZfsMgmt::KNOCKOUT_PREFIX }.map { |k, v| "#{k}=#{v}" }
+    end
+
+    def zfs_excludes_layers_for(dataset_name)
+      layers = []
+      dataset_ancestors(dataset_name).each do |ancestor|
+        raw_entry = @raw_zfs[ancestor]
+        next unless raw_entry && raw_entry.key?('excludes')
+
+        val = raw_entry['excludes']
+        if val.is_a?(Array) && val.all? { |item| item.is_a?(String) }
+          layers << val
+        end
+      end
+      layers
+    end
+
+    def zfs_overrides_layers_for(dataset_name)
+      layers = []
+      dataset_ancestors(dataset_name).each do |ancestor|
+        raw_entry = @raw_zfs[ancestor]
+        next unless raw_entry && raw_entry.key?('overrides')
+
+        val = raw_entry['overrides']
+        if val.is_a?(Hash) && val.all? { |k, v| k.is_a?(String) && v.is_a?(String) }
+          layers << val
+        end
+      end
+      layers
     end
 
     def zfs_props_for(dataset_name)
       result = {}
-      return result if dataset_name.nil? || dataset_name.empty? || @raw_zfs.empty?
+      ancestors = dataset_ancestors(dataset_name)
+      return result if ancestors.empty?
 
-      parts = dataset_name.to_s.split('/')
-      ancestors = (0...parts.length).map { |i| parts[0..i].join('/') }
+      excludes_layers = []
+      excludes_source = nil
+      overrides_layers = []
+      overrides_source = nil
 
       ancestors.each do |ancestor|
         raw_entry = @raw_zfs[ancestor]
@@ -118,6 +125,22 @@ module ZfsMgmt
             next
           end
           next if k == 'name'
+
+          if k == 'excludes'
+            if v.is_a?(Array) && v.all? { |item| item.is_a?(String) }
+              excludes_layers << v
+              excludes_source = source
+            end
+            next
+          end
+
+          if k == 'overrides'
+            if v.is_a?(Hash) && v.all? { |ok, ov| ok.is_a?(String) && ov.is_a?(String) }
+              overrides_layers << v
+              overrides_source = source
+            end
+            next
+          end
 
           if k == 'snapshot_recursive'
             if v == true
@@ -138,6 +161,16 @@ module ZfsMgmt
           result["zfsmgmt:#{prop_key}"] = str_val
           result["zfsmgmt:#{prop_key}@source"] = source
         end
+      end
+
+      unless excludes_layers.empty?
+        result['zfsmgmt:excludes'] = ZfsMgmt.merge_excludes(*excludes_layers, strip_knockouts: false)
+        result['zfsmgmt:excludes@source'] = excludes_source
+      end
+
+      unless overrides_layers.empty?
+        result['zfsmgmt:overrides'] = ZfsMgmt.merge_overrides(*overrides_layers, strip_knockouts: false)
+        result['zfsmgmt:overrides@source'] = overrides_source
       end
 
       result
@@ -222,6 +255,13 @@ module ZfsMgmt
 
     private
 
+    def dataset_ancestors(dataset_name)
+      return [] if dataset_name.nil? || dataset_name.empty? || @raw_zfs.empty?
+
+      parts = dataset_name.to_s.split('/')
+      (0...parts.length).map { |i| parts[0..i].join('/') }
+    end
+
     def normalize_zfs_entries(raw_zfs_input)
       models = {}
       deferred_raw = []
@@ -254,7 +294,11 @@ module ZfsMgmt
           $logger&.warn("unknown config property '#{k_str}' on #{ds_name}")
           next
         end
-        filtered[k_str] = v
+        if k_str == 'overrides' && v.is_a?(Hash)
+          filtered[k_str] = v.each_with_object({}) { |(ok, ov), oh| oh[ok.to_s] = ov }
+        else
+          filtered[k_str] = v
+        end
       end
       filtered
     end
@@ -268,6 +312,12 @@ module ZfsMgmt
       end
       raw['destination'] = model.destination_base if model.destination_base
       raw
+    end
+
+    def validate_excludes
+      unless excludes.is_a?(Array) && excludes.all? { |item| item.is_a?(String) }
+        errors.add(:excludes, 'must be an array of strings')
+      end
     end
 
     def validate_overrides
@@ -297,6 +347,29 @@ module ZfsMgmt
             errors.add(:zfs, "#{dataset_name}: must be a Zfs configuration table")
           end
           next
+        end
+        raw_entry = @raw_zfs[dataset_name]
+        if raw_entry
+          if raw_entry.key?('excludes')
+            raw_excl = raw_entry['excludes']
+            unless raw_excl.is_a?(Array) && raw_excl.all? { |item| item.is_a?(String) }
+              errors.add(:zfs, "#{dataset_name}: excludes must be an array of strings")
+            end
+          end
+          if raw_entry.key?('overrides')
+            raw_ovr = raw_entry['overrides']
+            if raw_ovr.is_a?(Array)
+              errors.add(:zfs, "#{dataset_name}: overrides must be a table of property=value pairs (use [zfs.\"#{dataset_name}\".overrides], not [[zfs.\"#{dataset_name}\".overrides]])")
+            elsif !raw_ovr.is_a?(Hash)
+              errors.add(:zfs, "#{dataset_name}: overrides must be a hash of property=value pairs")
+            else
+              raw_ovr.each do |k, v|
+                unless k.is_a?(String) && v.is_a?(String)
+                  errors.add(:zfs, "#{dataset_name}: overrides.#{k}: property and value must be strings")
+                end
+              end
+            end
+          end
         end
         unless zfs_obj.valid?
           errors.add(:zfs, "#{dataset_name}: #{zfs_obj.errors.full_messages.join(', ')}")
