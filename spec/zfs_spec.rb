@@ -259,6 +259,52 @@ RSpec.describe ZfsMgmt::Zfs do
         expect(zfs.base_destination).to be_nil
         expect(zfs.discard_first_destination).to be_nil
       end
+
+      it "supports hostname:path and user@hostname:path destination syntax" do
+        host_zfs = described_class.from_zfs_props("tank/sub/fs", {
+          "zfsmgmt:destination" => "drhost:backup/pool",
+          "zfsmgmt:destination@source" => "local"
+        })
+        expect(host_zfs.destination).to eq("drhost:backup/pool/fs")
+        expect(host_zfs.destination_remote).to eq("drhost")
+        expect(host_zfs.destination_path).to eq("backup/pool/fs")
+        expect(host_zfs.base_destination).to eq("drhost:backup/pool")
+        expect(host_zfs.resolved_destination("other@host2:other/pool")).to eq("other@host2:other/pool/fs")
+        expect(host_zfs.resolved_destination("localpool/ds")).to eq("localpool/ds/fs")
+
+        user_host_zfs = described_class.from_zfs_props("tank/sub/fs", {
+          "zfsmgmt:destination" => "zfs_recv@drhost:backup/dest",
+          "zfsmgmt:destination@source" => "inherited from tank"
+        })
+        expect(user_host_zfs.destination).to eq("zfs_recv@drhost:backup/dest/tank/sub/fs")
+        expect(user_host_zfs.destination_remote).to eq("zfs_recv@drhost")
+        expect(user_host_zfs.destination_path).to eq("backup/dest/tank/sub/fs")
+        expect(user_host_zfs.base_destination).to eq("zfs_recv@drhost:backup/dest")
+        expect(user_host_zfs.discard_first_destination).to eq("zfs_recv@drhost:backup/dest/sub/fs")
+        expect(user_host_zfs.discard_first_destination("host2:other/dest")).to eq("host2:other/dest/sub/fs")
+      end
+
+      it "warns when deprecated remote is set and only prepends it if destination lacks a host" do
+        expect($logger).to receive(:warn).with(/remote option is deprecated \(tank\/sub\/fs\)/)
+        no_host = described_class.from_zfs_props("tank/sub/fs", {
+          "zfsmgmt:remote" => "root@drhost",
+          "zfsmgmt:destination" => "backup/pool",
+          "zfsmgmt:destination@source" => "local"
+        })
+        expect(no_host.destination).to eq("root@drhost:backup/pool/fs")
+        expect(no_host.base_destination).to eq("root@drhost:backup/pool")
+        expect(no_host.destination_explicit_remote).to be_nil
+
+        expect($logger).to receive(:warn).with(/remote option is deprecated \(tank\/sub\/fs\)/)
+        with_host = described_class.from_zfs_props("tank/sub/fs", {
+          "zfsmgmt:remote" => "root@oldhost",
+          "zfsmgmt:destination" => "zfs_recv@newhost:backup/pool",
+          "zfsmgmt:destination@source" => "local"
+        })
+        expect(with_host.destination).to eq("zfs_recv@newhost:backup/pool/fs")
+        expect(with_host.destination_remote).to eq("zfs_recv@newhost")
+        expect(with_host.destination_explicit_remote).to eq("zfs_recv@newhost")
+      end
     end
 
     it "maps type and volume? from ZFS properties" do
@@ -331,7 +377,8 @@ RSpec.describe ZfsMgmt::Zfs do
     end
 
     it "does not warn for any valid zfsmgmt:* properties or @source metadata" do
-      expect($logger).not_to receive(:warn)
+      expect($logger).not_to receive(:warn).with(/unknown zfsmgmt property/)
+      allow($logger).to receive(:warn).with(/remote option is deprecated/)
 
       props = described_class::VALID_ZFS_PROPS.each_with_object({}) do |prop, h|
         h[prop] = "true"

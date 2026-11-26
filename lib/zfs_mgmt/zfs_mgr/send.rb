@@ -5,9 +5,7 @@ class ZfsMgmt::ZfsMgr::Send < Thor
                :desc => 'only act on zfs matching this regexp'
   desc "all", "send all zfs configured via user properties"
   method_option :remote, :type => :string,
-                :desc => 'remote specification like root@otherhost or localhost'
-  method_option :destination, :type => :string,
-                :desc => 'destination path like otherpool/ourpool'
+                :desc => 'DEPRECATED: remote specification like root@otherhost or localhost (specify in destination property or config instead)'
   method_option :verbose, :type => :string, :aliases => :'-v', :enum => ['send','receive','recv','mbuffer','pv'],
                 :desc => 'enable verbose output on the specified element of the pipe'
   method_option :initial_snapshot, :type => :string, :enum => ['oldest','newest'], :default => 'oldest',

@@ -31,7 +31,7 @@ module ZfsMgmt
   class Zfs
     include EasyTalk::Model
 
-    attr_reader :provided_attributes, :destination_base
+    attr_reader :provided_attributes, :destination_base, :destination_explicit_remote
 
     SEND_BOOL_PROPS = %i[
       send_intermediary
@@ -109,9 +109,9 @@ module ZfsMgmt
       property :send_enabled, T::Boolean, optional: true, default: false, as: :send,
                description: 'Whether zfs send is enabled for this dataset'
       property :remote, String, optional: true,
-               description: 'Remote SSH target for zfs recv (e.g. user@host)'
+               description: 'DEPRECATED: Remote SSH target for zfs recv (specify remote in destination instead, e.g. user@host:pool/dataset)'
       property :destination, String, optional: true,
-               description: 'Resolved destination ZFS dataset path for zfs send/recv'
+               description: 'Destination ZFS dataset path for zfs send/recv, optionally prefixed with [user@]host: (e.g. backup/tank or user@host:backup/tank)'
 
       property :send_intermediary, T::Boolean, optional: true, default: false,
                description: 'Pass -I (intermediary snapshots) to zfs send'
@@ -164,11 +164,25 @@ module ZfsMgmt
       @snapshots = attrs.delete(:snapshots) if attrs.key?(:snapshots)
       @destination_relative_path = attrs.delete(:destination_relative_path) if attrs.key?(:destination_relative_path)
       @destination_base = attrs.delete(:destination_base) if attrs.key?(:destination_base)
+      @destination_explicit_remote = if attrs.key?(:destination_explicit_remote)
+                                       attrs.delete(:destination_explicit_remote)
+                                     else
+                                       ZfsMgmt.parse_destination(attrs[:destination]).first
+                                     end
       @config_merged = attrs.key?(:config_merged) ? !!attrs.delete(:config_merged) : false
       if attrs.key?(:send) && !attrs.key?(:send_enabled)
         attrs[:send_enabled] = attrs.delete(:send)
       end
       @provided_attributes = attrs.keys.to_set
+      if attrs.key?(:remote) && !attrs[:remote].nil? && !attrs[:remote].to_s.empty?
+        remote_val = attrs[:remote].to_s
+        ctx = attrs[:name].nil? || attrs[:name].to_s.empty? ? nil : attrs[:name].to_s
+        ZfsMgmt.warn_deprecated_remote(ctx)
+        if attrs[:destination] && !attrs[:destination].to_s.empty? && @destination_explicit_remote.nil?
+          _, dest_path = ZfsMgmt.parse_destination(attrs[:destination])
+          attrs[:destination] = ZfsMgmt.format_destination(remote_val, dest_path)
+        end
+      end
       attrs[:excludes] = [] unless attrs.key?(:excludes)
       if attrs.key?(:overrides)
         if attrs[:overrides].is_a?(Hash)
@@ -225,11 +239,20 @@ module ZfsMgmt
       snapshots
     end
 
+    def destination_remote
+      ZfsMgmt.parse_destination(destination).first
+    end
+
+    def destination_path
+      ZfsMgmt.parse_destination(destination).last
+    end
+
     def resolved_destination(override = nil)
       return destination unless override
 
+      ov_remote, ov_path = ZfsMgmt.parse_destination(override)
       rel = @destination_relative_path || File.basename(name)
-      File.join(override, rel)
+      ZfsMgmt.format_destination(ov_remote, File.join(ov_path, rel))
     end
 
     def base_destination(override = nil)
@@ -242,8 +265,10 @@ module ZfsMgmt
       base = base_destination(override)
       return nil unless base
 
+      base_remote, base_path = ZfsMgmt.parse_destination(base)
       rel = name.include?('/') ? name.split('/', 2).last : nil
-      rel && !rel.empty? ? File.join(base, rel) : base
+      joined = rel && !rel.empty? ? File.join(base_path, rel) : base_path
+      ZfsMgmt.format_destination(base_remote, joined)
     end
 
     def self.warn_unknown_zfs_props(name, props)
@@ -315,16 +340,19 @@ module ZfsMgmt
       if props.key?('zfsmgmt:destination')
         dest_base = props['zfsmgmt:destination']
         dest_src = props['zfsmgmt:destination@source']
-        if dest_src == 'local'
-          rel = File.basename(name)
-          attrs[:destination] = File.join(dest_base, rel)
+        explicit_remote, base_path = ZfsMgmt.parse_destination(dest_base)
+        prop_remote = props['zfsmgmt:remote']
+        effective_remote = explicit_remote || (prop_remote && !prop_remote.to_s.empty? ? prop_remote : nil)
+        rel = if dest_src == 'local'
+                File.basename(name)
+              elsif dest_src && (m = /\Ainherited from (.+)\z/.match(dest_src))
+                File.join(File.basename(m[1]), name.sub(m[1], ''))
+              end
+        if rel
+          attrs[:destination] = ZfsMgmt.format_destination(effective_remote, File.join(base_path, rel))
           attrs[:destination_relative_path] = rel
-          attrs[:destination_base] = dest_base
-        elsif dest_src && (m = /\Ainherited from (.+)\z/.match(dest_src))
-          rel = File.join(File.basename(m[1]), name.sub(m[1], ''))
-          attrs[:destination] = File.join(dest_base, rel)
-          attrs[:destination_relative_path] = rel
-          attrs[:destination_base] = dest_base
+          attrs[:destination_base] = ZfsMgmt.format_destination(effective_remote, base_path)
+          attrs[:destination_explicit_remote] = explicit_remote
         end
       end
 

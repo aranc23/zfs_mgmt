@@ -123,11 +123,11 @@
           },
           "remote": {
             "type": "string",
-            "description": "Remote SSH target for zfs recv (e.g. user@host)"
+            "description": "DEPRECATED: Remote SSH target for zfs recv (specify remote in destination instead, e.g. user@host:pool/dataset)"
           },
           "destination": {
             "type": "string",
-            "description": "Resolved destination ZFS dataset path for zfs send/recv"
+            "description": "Destination ZFS dataset path for zfs send/recv, optionally prefixed with [user@]host: (e.g. backup/tank or user@host:backup/tank)"
           },
           "send_intermediary": {
             "type": "boolean",

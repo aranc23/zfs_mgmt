@@ -48,9 +48,32 @@ $lock = nil
 
 module ZfsMgmt
   KNOCKOUT_PREFIX = '**'.freeze
+  DESTINATION_REMOTE_RE = /\A((?:[^@:\/\s]+@)?[^:\/\s]+):(.+)\z/
 
   class << self
     attr_accessor :global_options, :config
+  end
+
+  def self.parse_destination(dest)
+    return [nil, nil] if dest.nil?
+
+    str = dest.to_s
+    if (m = DESTINATION_REMOTE_RE.match(str))
+      [m[1], m[2]]
+    else
+      [nil, str]
+    end
+  end
+
+  def self.format_destination(remote, path)
+    return path if remote.nil? || remote.to_s.empty? || path.nil? || path.to_s.empty?
+
+    "#{remote}:#{path}"
+  end
+
+  def self.warn_deprecated_remote(context = nil)
+    suffix = context ? " (#{context})" : ''
+    $logger&.warn("remote option is deprecated#{suffix}; include the remote host in destination instead (e.g. user@host:pool/dataset)")
   end
 
   def self.parse_excludes(value)
@@ -614,21 +637,24 @@ module ZfsMgmt
     zfs_name = zfs_obj.name
     sorted = snaps.keys.sort { |a,b| snaps[a]['creation'] <=> snaps[b]['creation'] }
     discard_first = recv_discard_first?(options, zfs_obj)
-    destination_path = if discard_first
-                         zfs_obj.discard_first_destination(options[:destination])
-                       else
-                         zfs_obj.resolved_destination(options[:destination])
-                       end
-    recv_target = discard_first ? zfs_obj.base_destination(options[:destination]) : destination_path
+    raw_destination = if discard_first
+                        zfs_obj.discard_first_destination
+                      else
+                        zfs_obj.resolved_destination
+                      end
+    raw_recv_target = discard_first ? zfs_obj.base_destination : raw_destination
+    _, destination_path = parse_destination(raw_destination)
+    _, recv_target = parse_destination(raw_recv_target)
     unless destination_path
       $logger.error("fatal error: unable to determine destination path for #{zfs_name}")
       exit(1)
     end
+    cmd_prefix = recv_command_prefix(options, zfs_obj)
     # does the destination zfs already exist?
     remote_zfs_state = ''
     begin
       recv_zfs = zfsget(zfs: destination_path,
-                        command_prefix: recv_command_prefix(options, zfs_obj),
+                        command_prefix: cmd_prefix,
                         #properties: ['receive_resume_token'],
                        )
     rescue ZfsDatasetNotFoundError
@@ -662,7 +688,7 @@ module ZfsMgmt
       e = zfs_send_estimate(com) if options[:verbose] == 'pv'
       com += mbuffer_command(options) if options[:mbuffer]
       com += pv_command(options,e) if options[:verbose] == 'pv'
-      com += zfs_recv_com(options,[],zfs_obj,recv_target)
+      com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false)
  
       status = system_com(com)
       record_send_state(zfs_name, status) unless options[:noop]
@@ -680,7 +706,7 @@ module ZfsMgmt
       com += mbuffer_command(options) if options[:mbuffer]
       com += pv_command(options,e) if options[:verbose] == 'pv'
 
-      com += zfs_recv_com(options,[],zfs_obj,recv_target)
+      com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false)
 
       status = system_com(com)
       record_send_state(zfs_name, status) unless options[:noop]
@@ -693,7 +719,7 @@ module ZfsMgmt
     begin
       remote_snaps = zfsget(zfs: destination_path,
                             types: ['snapshot'],
-                            command_prefix: recv_command_prefix(options, zfs_obj),
+                            command_prefix: cmd_prefix,
                             properties: ['creation','userrefs'],
                            )
     rescue ZfsGetError
@@ -725,7 +751,7 @@ module ZfsMgmt
         e = zfs_send_estimate(com) if options[:verbose] == 'pv'
         com += mbuffer_command(options) if options[:mbuffer]
         com += pv_command(options,e) if options[:verbose] == 'pv'
-        com += zfs_recv_com(options,[],zfs_obj,recv_target)
+        com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false)
 
         status = system_com(com)
         record_send_state(zfs_name, status) unless options[:noop]
@@ -796,7 +822,7 @@ module ZfsMgmt
     VOLUME_UNSUPPORTED_RECV_PROPERTIES.include?(prop_name)
   end
 
-  def self.zfs_recv_com(options,extra_opts,props,target)
+  def self.zfs_recv_com(options,extra_opts,props,target, warn_deprecated: true)
     zfs_obj = props.is_a?(ZfsMgmt::Zfs) ? props : ZfsMgmt::Zfs.from_zfs_props('', props)
     zfs_recv_com = [ ZfsMgmt.global_options[:zfs_binary], 'recv' ]
     zfs_recv_com.push('-s') if recv_state_enabled?(options, zfs_obj)
@@ -833,19 +859,48 @@ module ZfsMgmt
       end
     end
     zfs_recv_com += extra_opts
-    zfs_recv_com.push(dq(target))
+    _, target_path = parse_destination(target)
+    zfs_recv_com.push(dq(target_path))
 
-    if options[:remote] or zfs_obj.remote
+    prefix = recv_command_prefix(options, zfs_obj, target, warn_deprecated: warn_deprecated)
+    unless prefix.empty?
       if options[:mbuffer]
         zfs_recv_com = mbuffer_command(options) + zfs_recv_com
       end
-      zfs_recv_com = recv_command_prefix(options, zfs_obj) + [ sq(zfs_recv_com.join(' ')) ]
+      zfs_recv_com = prefix + [ sq(zfs_recv_com.join(' ')) ]
     end
     zfs_recv_com
   end
-  def self.recv_command_prefix(options,props)
-    remote = options[:remote] || (props.is_a?(ZfsMgmt::Zfs) ? props.remote : props['zfsmgmt:remote'])
-    remote ? [ 'ssh', remote ] : []
+  def self.effective_remote(options, props, target = nil, warn_deprecated: true)
+    opts = options || {}
+    opt_remote = opts.key?(:remote) ? opts[:remote] : opts['remote']
+    opt_remote = nil if opt_remote.respond_to?(:empty?) && opt_remote.empty?
+
+    if warn_deprecated && opt_remote
+      warn_deprecated_remote('CLI --remote')
+    end
+
+    if target
+      target_remote, = parse_destination(target)
+      return target_remote if target_remote
+    end
+
+    if props.is_a?(ZfsMgmt::Zfs)
+      return props.destination_explicit_remote if props.destination_explicit_remote
+      return opt_remote if opt_remote
+      return props.remote
+    elsif props.is_a?(Hash)
+      prop_dest_remote, = parse_destination(props['zfsmgmt:destination'])
+      return prop_dest_remote if prop_dest_remote
+      return opt_remote if opt_remote
+      return props['zfsmgmt:remote']
+    end
+
+    opt_remote
+  end
+  def self.recv_command_prefix(options, props, target = nil, warn_deprecated: true)
+    remote = effective_remote(options, props, target, warn_deprecated: warn_deprecated)
+    remote && !remote.empty? ? [ 'ssh', remote ] : []
   end
   def self.zfs_send_estimate(com)
     lcom = com.dup
@@ -940,7 +995,7 @@ module ZfsMgmt
         next
       end
       unless zfs.destination
-        $logger.error("#{zfs.name}: you must specify a destination zfs path via the user property zfsmgmt:destination, even if using --destination on the command line, skipping")
+        $logger.error("#{zfs.name}: you must specify a destination zfs path via the user property zfsmgmt:destination, skipping")
         next
       end
       if zfs.snapshots.empty?
