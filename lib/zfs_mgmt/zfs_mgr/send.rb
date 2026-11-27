@@ -6,8 +6,8 @@ class ZfsMgmt::ZfsMgr::Send < Thor
   desc "all", "send all zfs configured via user properties"
   method_option :remote, :type => :string,
                 :desc => 'DEPRECATED: remote specification like root@otherhost or localhost (specify in destination property or config instead)'
-  method_option :verbose, :type => :string, :aliases => :'-v', :enum => ['send','receive','recv','mbuffer','pv'],
-                :desc => 'enable verbose output on the specified element of the pipe'
+  method_option :verbose, :type => :string, :aliases => :'-v', :enum => ['send','receive','recv','mbuffer','mbuffer_send','mbuffer_recv','pv'],
+                :desc => 'enable verbose output on the specified element of the pipe (mbuffer enables the final mbuffer; mbuffer_send/mbuffer_recv target a specific side)'
   method_option :initial_snapshot, :type => :string, :enum => ['oldest','newest'], :default => 'oldest',
                 :desc => 'when sending the initial snapshot use the oldest or most recent snapshot'
 

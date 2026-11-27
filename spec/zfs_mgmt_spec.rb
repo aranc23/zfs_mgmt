@@ -418,6 +418,15 @@ RSpec.describe ZfsMgmt do
         end
         described_class.start(["all", "--mbuffer", "--mbuffer-size", "512M"])
       end
+
+      it "passes --verbose mbuffer, mbuffer_send, and mbuffer_recv through to zfs_send_all" do
+        %w[mbuffer mbuffer_send mbuffer_recv].each do |mode|
+          expect(ZfsMgmt).to receive(:zfs_send_all) do |opts|
+            expect(opts[:verbose]).to eq(mode)
+          end
+          described_class.start(["all", "--verbose", mode])
+        end
+      end
     end
   end
 
@@ -1317,9 +1326,28 @@ RSpec.describe ZfsMgmt do
       expect(com).to eq(["zfs", "send", "-v", "-P", "-c", "-h", "-w", "-i", '"@snap1"', '"tank/fs@snap2"', "|"])
     end
 
-    it "constructs mbuffer_command with quiet and size flags" do
+    it "constructs mbuffer_command with quiet and size flags and selects verbose mbuffer side" do
       expect(ZfsMgmt.mbuffer_command({ mbuffer_size: "1G" })).to eq(["mbuffer", "-q", "-m", "1G", "|"])
       expect(ZfsMgmt.mbuffer_command({ verbose: "mbuffer" })).to eq(["mbuffer", "|"])
+
+      # Local send (single mbuffer on send side)
+      expect(ZfsMgmt.mbuffer_command({ verbose: "mbuffer" }, nil, side: :send, remote: false)).to eq(["mbuffer", "|"])
+      expect(ZfsMgmt.mbuffer_command({ verbose: "mbuffer_send" }, nil, side: :send, remote: false)).to eq(["mbuffer", "|"])
+      expect(ZfsMgmt.mbuffer_command({ verbose: "mbuffer_recv" }, nil, side: :send, remote: false)).to eq(["mbuffer", "-q", "|"])
+
+      # Remote send (two mbuffers: send side and remote recv side)
+      expect(ZfsMgmt.mbuffer_command({ verbose: "mbuffer" }, nil, side: :send, remote: true)).to eq(["mbuffer", "-q", "|"])
+      expect(ZfsMgmt.mbuffer_command({ verbose: "mbuffer" }, nil, side: :recv, remote: true)).to eq(["mbuffer", "|"])
+
+      expect(ZfsMgmt.mbuffer_command({ verbose: "mbuffer_send" }, nil, side: :send, remote: true)).to eq(["mbuffer", "|"])
+      expect(ZfsMgmt.mbuffer_command({ verbose: "mbuffer_send" }, nil, side: :recv, remote: true)).to eq(["mbuffer", "-q", "|"])
+
+      expect(ZfsMgmt.mbuffer_command({ verbose: "mbuffer_recv" }, nil, side: :send, remote: true)).to eq(["mbuffer", "-q", "|"])
+      expect(ZfsMgmt.mbuffer_command({ verbose: "mbuffer_recv" }, nil, side: :recv, remote: true)).to eq(["mbuffer", "|"])
+
+      # Other verbose modes keep -q on both sides
+      expect(ZfsMgmt.mbuffer_command({ verbose: "send" }, nil, side: :send, remote: false)).to eq(["mbuffer", "-q", "|"])
+      expect(ZfsMgmt.mbuffer_command({ verbose: "send" }, nil, side: :recv, remote: true)).to eq(["mbuffer", "-q", "|"])
     end
 
     it "constructs pv_command with and without size estimate" do
@@ -1979,6 +2007,93 @@ RSpec.describe ZfsMgmt do
         "'zfs recv -s \"#{dest}\"'"
       ]).ordered.and_return(status_ok)
       ZfsMgmt.zfs_send({}, zfs, { "zfsmgmt:mbuffer" => "false" }, snaps)
+    end
+
+    it "applies --verbose mbuffer, mbuffer_send, and mbuffer_recv to the selected mbuffer invocation(s) in .zfs_send" do
+      local_props = { "zfsmgmt:destination" => "backup/pool", "zfsmgmt:destination@source" => "local" }
+      local_dest = "backup/pool/fs"
+      allow(ZfsMgmt).to receive(:zfsget).with(zfs: local_dest, command_prefix: []).and_return({ local_dest => {} })
+      allow(ZfsMgmt).to receive(:zfsget).with(
+        zfs: local_dest, types: ["snapshot"], command_prefix: [], properties: ["creation", "userrefs"]
+      ).and_return({ "#{local_dest}@snap1" => { "creation" => 1000, "userrefs" => 0 } })
+
+      remote_props = { "zfsmgmt:destination" => "drhost:offsite/pool", "zfsmgmt:destination@source" => "local" }
+      remote_dest = "offsite/pool/fs"
+      expected_ssh = ["ssh", "-o", "BatchMode=yes", "drhost"]
+      allow(ZfsMgmt).to receive(:zfsget).with(zfs: remote_dest, command_prefix: expected_ssh).and_return({ remote_dest => {} })
+      allow(ZfsMgmt).to receive(:zfsget).with(
+        zfs: remote_dest, types: ["snapshot"], command_prefix: expected_ssh, properties: ["creation", "userrefs"]
+      ).and_return({ "#{remote_dest}@snap1" => { "creation" => 1000, "userrefs" => 0 } })
+
+      status_ok = instance_double(Process::Status, success?: true, exitstatus: 0)
+
+      # Local send with --verbose mbuffer: sole mbuffer omits -q
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "|",
+        "zfs", "recv", "-s", "\"#{local_dest}\""
+      ]).ordered.and_return(status_ok)
+      ZfsMgmt.zfs_send({ verbose: "mbuffer" }, zfs, local_props, snaps)
+
+      # Local send with --verbose mbuffer_send omits -q; mbuffer_recv keeps -q
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "|",
+        "zfs", "recv", "-s", "\"#{local_dest}\""
+      ]).ordered.and_return(status_ok)
+      ZfsMgmt.zfs_send({ verbose: "mbuffer_send" }, zfs, local_props, snaps)
+
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
+        "zfs", "recv", "-s", "\"#{local_dest}\""
+      ]).ordered.and_return(status_ok)
+      ZfsMgmt.zfs_send({ verbose: "mbuffer_recv" }, zfs, local_props, snaps)
+
+      # Remote send with --verbose mbuffer: send-side keeps -q, remote recv-side omits -q
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
+        *expected_ssh,
+        "'mbuffer | zfs recv -s \"#{remote_dest}\"'"
+      ]).ordered.and_return(status_ok)
+      ZfsMgmt.zfs_send({ verbose: "mbuffer" }, zfs, remote_props, snaps)
+
+      # Remote send with --verbose mbuffer_send: send-side omits -q, remote recv-side keeps -q
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "|",
+        *expected_ssh,
+        "'mbuffer -q | zfs recv -s \"#{remote_dest}\"'"
+      ]).ordered.and_return(status_ok)
+      ZfsMgmt.zfs_send({ verbose: "mbuffer_send" }, zfs, remote_props, snaps)
+
+      # Remote send with --verbose mbuffer_recv: send-side keeps -q, remote recv-side omits -q
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
+        *expected_ssh,
+        "'mbuffer | zfs recv -s \"#{remote_dest}\"'"
+      ]).ordered.and_return(status_ok)
+      ZfsMgmt.zfs_send({ verbose: "mbuffer_recv" }, zfs, remote_props, snaps)
+
+      # Multi-destination (local + remote) with --verbose mbuffer
+      mixed_props = {
+        "zfsmgmt:destination" => "backup/pool,drhost:offsite/pool",
+        "zfsmgmt:destination@source" => "local"
+      }
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "|",
+        "zfs", "recv", "-s", "\"#{local_dest}\""
+      ]).ordered.and_return(status_ok)
+      expect(ZfsMgmt).to receive(:system_com).with([
+        "zfs", "send", "-i", '"@snap1"', '"tank/sub/fs@snap2"', "|",
+        "mbuffer", "-q", "|",
+        *expected_ssh,
+        "'mbuffer | zfs recv -s \"#{remote_dest}\"'"
+      ]).ordered.and_return(status_ok)
+      ZfsMgmt.zfs_send({ verbose: "mbuffer" }, zfs, mixed_props, snaps)
     end
 
     it "omits BatchMode when knocked out via BatchMode=** in zfsmgmt:ssh_config or config" do

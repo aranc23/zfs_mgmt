@@ -755,6 +755,7 @@ module ZfsMgmt
     entry_remote = entry[:explicit_remote] || opt_remote || zfs_obj.remote
     entry_remote = nil if entry_remote.respond_to?(:empty?) && entry_remote.empty?
     cmd_prefix = entry_remote ? ssh_command_prefix(entry_remote, resolve_ssh_config(zfs_obj)) : []
+    is_remote = !cmd_prefix.empty?
     state_destination = format_destination(entry_remote, destination_path)
 
     # does the destination zfs already exist?
@@ -793,7 +794,7 @@ module ZfsMgmt
                           source,
                          )
       e = zfs_send_estimate(com) if options[:verbose] == 'pv'
-      com += mbuffer_command(options, zfs_obj) if mbuffer_enabled?(options, zfs_obj)
+      com += mbuffer_command(options, zfs_obj, side: :send, remote: is_remote) if mbuffer_enabled?(options, zfs_obj)
       com += pv_command(options,e) if options[:verbose] == 'pv'
       com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
  
@@ -810,7 +811,7 @@ module ZfsMgmt
       com.push('-v','-P') if key_comp?(options, 'verbose', 'send')
       com.push('|')
       e = zfs_send_estimate(com) if options[:verbose] == 'pv'
-      com += mbuffer_command(options, zfs_obj) if mbuffer_enabled?(options, zfs_obj)
+      com += mbuffer_command(options, zfs_obj, side: :send, remote: is_remote) if mbuffer_enabled?(options, zfs_obj)
       com += pv_command(options,e) if options[:verbose] == 'pv'
 
       com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
@@ -856,7 +857,7 @@ module ZfsMgmt
 
         com += zfs_send_com(options,zfs_obj,[i_opt, dq('@' + rsnap.split('@')[1])], sorted[-1])
         e = zfs_send_estimate(com) if options[:verbose] == 'pv'
-        com += mbuffer_command(options, zfs_obj) if mbuffer_enabled?(options, zfs_obj)
+        com += mbuffer_command(options, zfs_obj, side: :send, remote: is_remote) if mbuffer_enabled?(options, zfs_obj)
         com += pv_command(options,e) if options[:verbose] == 'pv'
         com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
 
@@ -912,11 +913,26 @@ module ZfsMgmt
     nil
   end
 
-  def self.mbuffer_command(options, props = nil)
+  def self.mbuffer_verbose?(options, side: :recv, remote: false)
+    opts = options || {}
+    verbose = opts.key?(:verbose) ? opts[:verbose] : opts['verbose']
+    case verbose
+    when 'mbuffer'
+      remote ? side == :recv : true
+    when 'mbuffer_send'
+      side == :send
+    when 'mbuffer_recv'
+      side == :recv
+    else
+      false
+    end
+  end
+
+  def self.mbuffer_command(options, props = nil, side: :recv, remote: false)
     opts = options || {}
     mbuffer_bin = (ZfsMgmt.global_options && (ZfsMgmt.global_options[:mbuffer_binary] || ZfsMgmt.global_options['mbuffer_binary'])) || 'mbuffer'
     mbuffer_command = [ mbuffer_bin ]
-    mbuffer_command.push('-q') unless opts[:verbose] == 'mbuffer'
+    mbuffer_command.push('-q') unless mbuffer_verbose?(opts, side: side, remote: remote)
     size = resolve_mbuffer_size(opts, props)
     mbuffer_command.push('-m', size) if size && !size.to_s.empty?
     mbuffer_command.push('|')
@@ -1018,7 +1034,7 @@ module ZfsMgmt
     prefix = command_prefix.nil? ? recv_command_prefix(options, zfs_obj, target, warn_deprecated: warn_deprecated) : command_prefix
     unless prefix.empty?
       if mbuffer_enabled?(options, zfs_obj)
-        zfs_recv_com = mbuffer_command(options, zfs_obj) + zfs_recv_com
+        zfs_recv_com = mbuffer_command(options, zfs_obj, side: :recv, remote: true) + zfs_recv_com
       end
       zfs_recv_com = prefix + [ sq(zfs_recv_com.join(' ')) ]
     end
