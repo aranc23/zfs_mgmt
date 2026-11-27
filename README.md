@@ -356,6 +356,10 @@ Boolean (`true`/`on`, or `false`/`off`). Controls whether `mbuffer` is
 inserted into the `zfs send` | `zfs recv` pipeline. Configurable at
 top-level config (`mbuffer`), per-dataset config (`[zfs."<dataset>"]`),
 ZFS user property (`zfsmgmt:mbuffer`), and CLI (`--mbuffer` / `--no-mbuffer`).
+Pass `--verbose mbuffer` to enable verbose `mbuffer` status on the final
+`mbuffer` in the pipeline (the sole `mbuffer` for local sends, or the
+receiving `mbuffer` for remote sends), or use `--verbose mbuffer_send` /
+`--verbose mbuffer_recv` to target a specific side.
 
 ### zfsmgmt:mbuffer_size
 Buffer size string passed to `mbuffer -m` (for example `512M` or `1G`).
