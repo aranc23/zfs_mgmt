@@ -2446,8 +2446,8 @@ RSpec.describe ZfsMgmt do
         *expected_ssh,
         "'zfs send -i \"@snap1\" \"#{src_path}@snap2\" | mbuffer -q -m 512M'",
         "|",
-        "pv", "-prb", "-e", "-s", 2048, "|",
         "mbuffer", "-q", "-m", "512M", "|",
+        "pv", "-prb", "-e", "-s", 2048, "|",
         "zfs", "recv", "-s", "\"#{local_ds}\""
       ]).ordered.and_return(status_ok)
       ZfsMgmt.zfs_recv({ verbose: "pv", pv_binary: "pv" }, local_ds, {})

@@ -1077,10 +1077,10 @@ module ZfsMgmt
       com += raw_send_cmd + ['|']
       com += mbuffer_command(options, zfs_obj, side: :send, remote: is_remote) if use_mbuffer
     end
-    com += pv_command(options, estimate) if options[:verbose] == 'pv'
     if send_is_remote && !recv_is_remote && use_mbuffer
       com += mbuffer_command(options, zfs_obj, side: :recv, remote: true)
     end
+    com += pv_command(options, estimate) if options[:verbose] == 'pv'
     com += zfs_recv_com(options, [], zfs_obj, recv_target, warn_deprecated: false, command_prefix: recv_prefix)
     com
   end
