@@ -31,7 +31,8 @@ module ZfsMgmt
   class Zfs
     include EasyTalk::Model
 
-    attr_reader :provided_attributes, :destination_base, :destination_explicit_remote
+    attr_reader :provided_attributes, :destination_base, :destination_explicit_remote,
+                :source_base, :source_explicit_remote
 
     SEND_BOOL_PROPS = %i[
       send_intermediary
@@ -57,6 +58,7 @@ module ZfsMgmt
         manage policy strategy minage matchsnaps ignoresnaps prefersnaps
         snapshot snap_prefix snap_timestamp
         send remote destination send_replicate
+        recv source
         recv_state
         mbuffer mbuffer_size
         excludes overrides ssh_config
@@ -68,7 +70,7 @@ module ZfsMgmt
 
     VALID_CONFIG_KEYS = (
       VALID_ZFS_PROPS.map { |p| p.sub(/\Azfsmgmt:/, '') } +
-      %w[name type snapshot_recursive send_enabled]
+      %w[name type snapshot_recursive send_enabled recv_enabled]
     ).uniq.freeze
 
     define_schema do
@@ -113,6 +115,10 @@ module ZfsMgmt
                description: 'DEPRECATED: Remote SSH target for zfs recv (specify remote in destination instead, e.g. user@host:pool/dataset)'
       property :destination, String, optional: true,
                description: 'Destination ZFS dataset path(s) for zfs send/recv, optionally prefixed with [user@]host: (string or array of strings, e.g. backup/tank or ["backup/tank", "user@host:backup/tank"])'
+      property :recv_enabled, T::Boolean, optional: true, default: false, as: :recv,
+               description: 'Whether zfs recv is enabled for this dataset'
+      property :source, String, optional: true,
+               description: 'Source ZFS dataset path for zfs recv, optionally prefixed with [user@]host: (e.g. tank/data or user@host:tank/data)'
 
       property :send_intermediary, T::Boolean, optional: true, default: false,
                description: 'Pass -I (intermediary snapshots) to zfs send'
@@ -164,6 +170,7 @@ module ZfsMgmt
     end
 
     validate :validate_destination
+    validate :validate_source
     validate :validate_excludes
     validate :validate_overrides
     validate :validate_ssh_config
@@ -178,11 +185,21 @@ module ZfsMgmt
       @destination_entries = attrs.delete(:destination_entries) if attrs.key?(:destination_entries)
       explicit_remote_provided = attrs.key?(:destination_explicit_remote)
       @destination_explicit_remote = attrs.delete(:destination_explicit_remote) if explicit_remote_provided
+      @source_relative_path = attrs.delete(:source_relative_path) if attrs.key?(:source_relative_path)
+      @source_base = attrs.delete(:source_base) if attrs.key?(:source_base)
+      source_explicit_remote_provided = attrs.key?(:source_explicit_remote)
+      @source_explicit_remote = attrs.delete(:source_explicit_remote) if source_explicit_remote_provided
       @config_merged = attrs.key?(:config_merged) ? !!attrs.delete(:config_merged) : false
       if attrs.key?(:send) && !attrs.key?(:send_enabled)
         attrs[:send_enabled] = attrs.delete(:send)
       end
+      if attrs.key?(:recv) && !attrs.key?(:recv_enabled)
+        attrs[:recv_enabled] = attrs.delete(:recv)
+      end
       @provided_attributes = attrs.keys.to_set
+      if !source_explicit_remote_provided && attrs[:source].is_a?(String)
+        @source_explicit_remote = ZfsMgmt.parse_destination(attrs[:source]).first
+      end
 
       raw_dest = attrs[:destination]
       valid_dest_input = raw_dest.is_a?(String) || (raw_dest.is_a?(Array) && raw_dest.all? { |item| item.is_a?(String) })
@@ -261,6 +278,14 @@ module ZfsMgmt
 
     def send?
       send_enabled == true
+    end
+
+    def recv=(value)
+      self.recv_enabled = value
+    end
+
+    def recv?
+      recv_enabled == true
     end
 
     def volume?
@@ -350,6 +375,36 @@ module ZfsMgmt
       end
     end
 
+    def source_remote
+      ZfsMgmt.parse_destination(source).first
+    end
+
+    def source_path
+      ZfsMgmt.parse_destination(source).last
+    end
+
+    def base_source(override = nil)
+      return override if override
+
+      @source_base || source
+    end
+
+    def resolved_source(override = nil)
+      return source unless override
+
+      ov_remote, ov_path = ZfsMgmt.parse_destination(override)
+      rel = @source_relative_path || File.basename(name)
+      ZfsMgmt.format_destination(ov_remote, File.join(ov_path, rel))
+    end
+
+    def self.relative_path_for(name, prop_src)
+      if prop_src == 'local'
+        File.basename(name)
+      elsif prop_src && (m = /\Ainherited from (.+)\z/.match(prop_src))
+        File.join(File.basename(m[1]), name.sub(m[1], ''))
+      end
+    end
+
     def self.warn_unknown_zfs_props(name, props)
       props.each_key do |key|
         key_str = key.to_s
@@ -422,11 +477,7 @@ module ZfsMgmt
         dest_src = props['zfsmgmt:destination@source']
         prop_remote = props['zfsmgmt:remote']
         prop_remote = nil if prop_remote && prop_remote.to_s.empty?
-        rel = if dest_src == 'local'
-                File.basename(name)
-              elsif dest_src && (m = /\Ainherited from (.+)\z/.match(dest_src))
-                File.join(File.basename(m[1]), name.sub(m[1], ''))
-              end
+        rel = relative_path_for(name, dest_src)
         if rel && !dest_bases.empty?
           entries = dest_bases.map do |dest_base|
             explicit_remote, base_path = ZfsMgmt.parse_destination(dest_base)
@@ -443,6 +494,35 @@ module ZfsMgmt
           attrs[:destination_explicit_remote] = entries.length == 1 ? entries.first[:explicit_remote] : nil
           attrs[:destination_entries] = entries
           attrs[:destination_relative_path] = rel
+        end
+      end
+
+      # Interpret zfsmgmt:recv taking @source into account
+      recv_val = props['zfsmgmt:recv']
+      recv_src = props['zfsmgmt:recv@source']
+      attrs[:recv_enabled] =
+        if recv_src == 'received' || replicated_descendant
+          false
+        elsif ZfsMgmt.prop_on?(recv_val)
+          true
+        elsif recv_val == 'local' && recv_src == 'local'
+          true
+        else
+          false
+        end
+
+      # Interpret zfsmgmt:source taking @source into account
+      if props.key?('zfsmgmt:source')
+        raw_source_prop = props['zfsmgmt:source']
+        source_src = props['zfsmgmt:source@source']
+        rel = relative_path_for(name, source_src)
+        if rel && raw_source_prop.is_a?(String) && !raw_source_prop.strip.empty?
+          source_base = raw_source_prop.strip
+          explicit_remote, base_path = ZfsMgmt.parse_destination(source_base)
+          attrs[:source] = ZfsMgmt.format_destination(explicit_remote, File.join(base_path, rel))
+          attrs[:source_base] = ZfsMgmt.format_destination(explicit_remote, base_path)
+          attrs[:source_explicit_remote] = explicit_remote
+          attrs[:source_relative_path] = rel
         end
       end
 
@@ -490,6 +570,12 @@ module ZfsMgmt
       return if valid
 
       errors.add(:destination, 'must be a string or an array of strings')
+    end
+
+    def validate_source
+      return if source.nil? || source.is_a?(String)
+
+      errors.add(:source, 'must be a string')
     end
 
     def validate_excludes

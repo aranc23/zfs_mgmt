@@ -188,7 +188,19 @@ module ZfsMgmt
             next
           end
 
-          prop_key = (k == 'send_enabled' ? 'send' : k)
+          if k == 'source'
+            if v.is_a?(String)
+              result['zfsmgmt:source'] = v
+              result['zfsmgmt:source@source'] = source
+            end
+            next
+          end
+
+          prop_key = case k
+                     when 'send_enabled' then 'send'
+                     when 'recv_enabled' then 'recv'
+                     else k
+                     end
           next unless ZfsMgmt::Zfs::VALID_ZFS_PROPS.include?("zfsmgmt:#{prop_key}")
 
           str_val = case v
@@ -261,6 +273,14 @@ module ZfsMgmt
               { 'type' => 'string' },
               { 'type' => 'array', 'items' => { 'type' => 'string' } }
             ]
+          }
+          zfs_props['recv'] = {
+            'description' => 'Whether zfs recv is enabled for this dataset (true, false, or "local")',
+            'oneOf' => [
+              { 'type' => 'boolean' },
+              { 'type' => 'string', 'enum' => %w[local] }
+            ],
+            'default' => false
           }
         end
       end
@@ -371,10 +391,15 @@ module ZfsMgmt
       raw = {}
       provided = model.provided_attributes || Set.new
       provided.each do |attr|
-        key = attr == :send_enabled ? 'send' : attr.to_s
+        key = case attr
+              when :send_enabled then 'send'
+              when :recv_enabled then 'recv'
+              else attr.to_s
+              end
         raw[key] = model.public_send(attr)
       end
       raw['destination'] = model.destination_base if model.destination_base
+      raw['source'] = model.source_base if model.source_base
       raw
     end
 
@@ -445,6 +470,9 @@ module ZfsMgmt
             unless valid_dest
               errors.add(:zfs, "#{dataset_name}: destination must be a string or an array of strings")
             end
+          end
+          if raw_entry.key?('source') && !raw_entry['source'].is_a?(String)
+            errors.add(:zfs, "#{dataset_name}: source must be a string")
           end
           if raw_entry.key?('excludes')
             raw_excl = raw_entry['excludes']

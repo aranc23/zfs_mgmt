@@ -154,6 +154,25 @@
               }
             ]
           },
+          "recv": {
+            "description": "Whether zfs recv is enabled for this dataset (true, false, or \"local\")",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "local"
+                ]
+              }
+            ],
+            "default": false
+          },
+          "source": {
+            "type": "string",
+            "description": "Source ZFS dataset path for zfs recv, optionally prefixed with [user@]host: (e.g. tank/data or user@host:tank/data)"
+          },
           "send_intermediary": {
             "type": "boolean",
             "description": "Pass -I (intermediary snapshots) to zfs send",

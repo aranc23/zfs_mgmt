@@ -29,7 +29,9 @@ without the --noop option to actually remove snapshots.
     Commands:
       zfsmgr help [COMMAND]               # Describe available commands or one specific command
       zfsmgr list SUBCOMMAND ...ARGS      # list filesystems
+      zfsmgr recv SUBCOMMAND ...ARGS      # receive zfs
       zfsmgr restic SUBCOMMAND ...ARGS    # backup zfs to restic
+      zfsmgr send SUBCOMMAND ...ARGS      # send zfs
       zfsmgr snapshot SUBCOMMAND ...ARGS  # manage snapshots
       zfsmgr zfsget [ZFS]                 # execute zfs get for the given properties and types and parse the output into a nested hash
 
@@ -183,6 +185,8 @@ Dataset options configured in TOML inherit to child datasets (e.g. `tank` -> `ta
 
 `destination` in `[zfs."pool/dataset"]` accepts either a single string or an array of strings (for example `destination = ["backup/tank", "zfs_recv@offsite.example.com:offsite/tank"]`) to send a dataset to multiple destinations.
 
+`source` in `[zfs."pool/dataset"]` accepts a single string (for example `source = "zfs_send@prod.example.com:tank"`) paired with `recv = true` (or `recv = "local"`) to pull snapshots into the local dataset via `zfsmgr recv all` (including datasets defined only in TOML config that have not yet been created locally).
+
 Unlike scalar options (where a higher-precedence source replaces lower ones), `excludes`, `overrides`, and `ssh_config` are **merged** from lowest precedence (`zfsmgmt:excludes` / `zfsmgmt:overrides` / `zfsmgmt:ssh_config`, with `ssh_config` prefilled with `BatchMode = "yes"`) up through top-level config, per-dataset config (ancestor to child), and CLI `--exclude` / `--option` flags (for `excludes`/`overrides`). To unset a value set at a lower precedence level, use the `**` knockout prefix:
 - In `overrides` / `ssh_config`: set `prop = "**"` in TOML (or `prop=**` / `**prop` in `zfsmgmt:*` or CLI `--option`) to remove `prop` from lower levels, or `"**"` alone to clear all lower-level options.
 - In `excludes`: include `"**prop"` to remove `prop` from lower levels, or `"**"` to clear all lower-level excludes.
@@ -318,9 +322,27 @@ Path resolution rules:
 - When the source is `received` (or unrecognized), no destination is
   resolved.
 
+### zfsmgmt:recv
+Enable `zfs recv` (pulling snapshots from `zfsmgmt:source`) for this dataset via `zfsmgr recv all`. Accepts boolean values (`true`/`on`) or `'local'`:
+- `true` or `on`: enables `zfs recv` when the property's ZFS source is `local` or `inherited`, and disables it when the source is `received` or when `zfsmgmt:send_replicate` is inherited from an ancestor.
+- `local`: enables `zfs recv` only when the property's ZFS source is `local` (not inherited or received).
+
+`zfsmgr recv all` runs `zfs send` on the source side (over SSH using `ssh_config` when `zfsmgmt:source` specifies `[user@]host:`) and `zfs recv` on the local dataset. Transfer results are recorded in the shared send/recv state database keyed by `(source, destination)` with `operation = "recv"`, visible in `zfsmgr recv state` / `zfsmgr send state` (`zfsmgr recv state --check` emits `zfs_recv` status lines).
+
+### zfsmgmt:source
+Base source ZFS dataset path for `zfsmgr recv all` (required when `zfsmgmt:recv` is enabled; configured via ZFS user property or TOML config, not a CLI option). Supports local and remote forms:
+- `zpool/zfs/zfs2` (local)
+- `hostname:zpool/zfs/zfs2` (remote via SSH)
+- `user@hostname:zpool/zfs/zfs2` (remote via SSH with user)
+
+Path resolution rules (analogous to `zfsmgmt:destination`):
+- When the property's ZFS source is `local`, the source path resolves to `<source>/<dataset basename>`.
+- When the property's ZFS source is `inherited from <ancestor>`, the source path resolves to `<source>/<ancestor basename>/<relative path>`.
+- When the property's ZFS source is `received` (or unrecognized), no source is resolved.
+
 ### zfs send / recv flags
 
-The following boolean options (`true`/`on`, or `false`/`off` in ZFS user properties; `true`/`false` in `[zfs."<dataset>"]` TOML config) map directly to `zfs send` or `zfs recv` command-line flags and can be overridden via `zfsmgr send all` CLI flags:
+The following boolean options (`true`/`on`, or `false`/`off` in ZFS user properties; `true`/`false` in `[zfs."<dataset>"]` TOML config) map directly to `zfs send` or `zfs recv` command-line flags and can be overridden via `zfsmgr send all` or `zfsmgr recv all` CLI flags:
 
 | User Property | Config Key | ZFS Option | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -347,9 +369,11 @@ not sent separately.
 
 ### zfsmgmt:recv_discard_first (default: false)
 Boolean (`true`/`on`). Pass `-d` (discard the first element of the sent
-snapshot's filesystem name) to `zfs recv`, passing the base
-`zfsmgmt:destination` as the `zfs recv` target and
-stripping the first path element for remote existence/snapshot checks.
+snapshot's filesystem name) to `zfs recv`. For `zfsmgr send all`, uses
+the base `zfsmgmt:destination` as the `zfs recv` target and strips the
+first path element for remote existence/snapshot checks; for
+`zfsmgr recv all`, strips the matching source suffix from the local
+dataset name to compute the `zfs recv` target.
 
 ### zfsmgmt:mbuffer (default: true)
 Boolean (`true`/`on`, or `false`/`off`). Controls whether `mbuffer` is
@@ -357,8 +381,8 @@ inserted into the `zfs send` | `zfs recv` pipeline. Configurable at
 top-level config (`mbuffer`), per-dataset config (`[zfs."<dataset>"]`),
 ZFS user property (`zfsmgmt:mbuffer`), and CLI (`--mbuffer` / `--no-mbuffer`).
 Pass `--verbose mbuffer` to enable verbose `mbuffer` status on the final
-`mbuffer` in the pipeline (the sole `mbuffer` for local sends, or the
-receiving `mbuffer` for remote sends), or use `--verbose mbuffer_send` /
+`mbuffer` in the pipeline (the sole `mbuffer` for local transfers, or the
+receiving `mbuffer` for remote transfers), or use `--verbose mbuffer_send` /
 `--verbose mbuffer_recv` to target a specific side.
 
 ### zfsmgmt:mbuffer_size
