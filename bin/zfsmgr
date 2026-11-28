@@ -16,7 +16,7 @@ class ZfsMgr < Thor
                :desc => 'pv binary'
   class_option :loglevel, :type => :string,
                :default => ( (ENV['ZFS_MGMT_LOGLEVEL'] && !ENV['ZFS_MGMT_LOGLEVEL'].empty?) ? ENV['ZFS_MGMT_LOGLEVEL'].downcase : ( $stdout.isatty ? 'info' : 'warn' ) ),
-               :enum => ['debug','error','fatal','info','warn','unknown'],
+               :enum => ['debug','error','fatal','info','warn','unknown','none','off','silent'],
                :desc => 'set logging level to specified severity'
   class_option :lock, :type => :boolean, :default => false,
                :desc => 'lock before running'
@@ -47,6 +47,8 @@ class ZfsMgr < Thor
   subcommand "send", ZfsMgmt::ZfsMgr::Send
   desc "recv SUBCOMMAND ...ARGS", "receive zfs"
   subcommand "recv", ZfsMgmt::ZfsMgr::Recv
+  desc "config SUBCOMMAND ...ARGS", "manage and validate zfsmgr configuration"
+  subcommand "config", ZfsMgmt::ZfsMgr::Config
 
   desc "schema", "print the config JSON schema (or its installed file path with --path)"
   method_option :path, :type => :boolean, :default => false,

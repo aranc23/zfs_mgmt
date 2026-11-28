@@ -316,6 +316,48 @@ module ZfsMgmt
     self.config = ZfsMgmt::Config.load_dir(dir)
   end
 
+  def self.validate_config(files: [], all: false, quiet: false, config_dir: nil, out: $stdout, err: $stderr)
+    target_files = []
+    dir = config_dir || self.config_dir
+    if all && dir && Dir.exist?(dir)
+      target_files.concat(Dir.glob(File.join(dir, '*.toml')).sort)
+    end
+    target_files.concat(Array(files))
+    target_files.uniq!
+
+    if !all && target_files.empty?
+      err.puts('Error: specify one or more config files or --all') unless quiet
+      return false
+    end
+
+    if all && target_files.empty?
+      out.puts("No config files found in #{dir}") unless quiet
+      return true
+    end
+
+    all_valid = true
+    target_files.each do |path|
+      result = ZfsMgmt::Config.validate_file(path)
+      if result[:valid]
+        out.puts("OK: #{path}") unless quiet
+      else
+        all_valid = false
+        err.puts("INVALID: #{path}: #{result[:error]}") unless quiet
+      end
+    end
+
+    if all_valid && target_files.length > 1
+      begin
+        ZfsMgmt::Config.load_files(target_files)
+      rescue ConfigError => e
+        all_valid = false
+        err.puts("INVALID (merged): #{e.message}") unless quiet
+      end
+    end
+
+    all_valid
+  end
+
   def self.merge_config_props(zfs_name, props)
     base = props || {}
     return base unless config && zfs_name && !zfs_name.empty?

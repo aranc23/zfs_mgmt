@@ -40,6 +40,7 @@ without the --noop option to actually remove snapshots.
 
     $ zfsmgr
     Commands:
+      zfsmgr config SUBCOMMAND ...ARGS    # manage and validate zfsmgr configuration
       zfsmgr help [COMMAND]               # Describe available commands or one specific command
       zfsmgr list SUBCOMMAND ...ARGS      # list filesystems
       zfsmgr recv SUBCOMMAND ...ARGS      # receive zfs
@@ -214,6 +215,24 @@ The schema file is also bundled inside the `zfs_mgmt` gem so tools like `taplo` 
     $ zfsmgr schema --path
     $ taplo check --schema "$(zfsmgr schema --path)" /etc/zfsmgr/*.toml
     $ zfsmgr schema > config.schema.json
+
+### Validation
+
+Validate one or more TOML configuration files (or all `*.toml` files in the active configuration directory) with `zfsmgr config validate`:
+
+    $ zfsmgr config validate /etc/zfsmgr/50-puppet.toml
+    $ zfsmgr config validate --all
+    $ zfsmgr config validate --all --config-dir /path/to/conf.d
+
+For automated checks (such as Puppet `file` `validate_cmd` or Ansible validation), pass `--quiet` (optionally with `--loglevel none` to suppress logger output) to rely solely on the exit status (`0` when valid, non-zero on error):
+
+```puppet
+file { '/etc/zfsmgr/50-puppet.toml':
+  ensure       => file,
+  content      => $content,
+  validate_cmd => '/usr/local/bin/zfsmgr config validate --quiet %',
+}
+```
 
 ## zfs user properties
 

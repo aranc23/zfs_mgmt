@@ -6,4 +6,5 @@ module ZfsMgmt::ZfsMgr
   require "zfs_mgmt/zfs_mgr/transfer_options"
   require "zfs_mgmt/zfs_mgr/send"
   require "zfs_mgmt/zfs_mgr/recv"
+  require "zfs_mgmt/zfs_mgr/config"
 end
