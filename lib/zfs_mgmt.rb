@@ -368,6 +368,8 @@ module ZfsMgmt
       'send',
       'remote',
       'destination',
+      'recv',
+      'source',
       'recv_state',
       'mbuffer',
       'mbuffer_size',
@@ -426,11 +428,9 @@ module ZfsMgmt
     end
   end
 
-  def self.zfsget(properties: ['all'],types: ['filesystem','volume'],zfs: '', command_prefix: [])
-    results={}
-    com = [ZfsMgmt.global_options[:zfs_binary], 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
-    $logger.debug((command_prefix+com).join(' '))
-    so,se,status = Open3.capture3((command_prefix+com).join(' '))
+  def self.run_zfs_read_command(com, zfs:, command_prefix: [])
+    $logger.debug((command_prefix + com).join(' '))
+    so, se, status = Open3.capture3((command_prefix + com).join(' '))
     if status.signaled?
       $logger.error("process was signalled \"#{com.join(' ')}\", termsig #{status.termsig}")
       raise ZfsGetError, "process was signalled \"#{com.join(' ')}\", termsig #{status.termsig}"
@@ -447,6 +447,13 @@ module ZfsMgmt
       se.split("\n").each { |l| $logger.error("stderr: #{l}") }
       raise ZfsGetError, "failed to execute \"#{com.join(' ')}\", exit status #{status.exitstatus}"
     end
+    so
+  end
+
+  def self.zfsget(properties: ['all'],types: ['filesystem','volume'],zfs: '', command_prefix: [])
+    results={}
+    com = [ZfsMgmt.global_options[:zfs_binary], 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
+    so = run_zfs_read_command(com, zfs: zfs, command_prefix: command_prefix)
     so.split("\n").each do |line|
       params = line.split("\t")
       unless results.has_key?(params[0])
@@ -464,6 +471,49 @@ module ZfsMgmt
       end
     end
     return results
+  end
+
+  def self.zfs_list_datasets(zfs:, types: ['filesystem', 'volume'], recursive: true, command_prefix: [])
+    results = {}
+    com = [ZfsMgmt.global_options[:zfs_binary], 'list', '-H', '-o', 'name,type', '-t', types.join(',')]
+    com.push('-r') if recursive
+    com.push(zfs)
+    so = run_zfs_read_command(com, zfs: zfs, command_prefix: command_prefix)
+    so.split("\n").each do |line|
+      next if line.strip.empty?
+
+      name, type = line.split("\t", 2)
+      results[name] = type if name && !name.empty?
+    end
+    results
+  end
+
+  def self.extract_inherited_props(source_name, raw_props)
+    inherited = {}
+    return inherited unless raw_props.is_a?(Hash)
+
+    raw_props.each do |k, v|
+      k_str = k.to_s
+      next unless k_str.start_with?('zfsmgmt:')
+      next if k_str.end_with?('@source')
+
+      inherited[k_str] = v.respond_to?(:dup) ? v.dup : v
+      src_key = "#{k_str}@source"
+      src_val = raw_props[src_key]
+      inherited[src_key] = (src_val == 'local' || src_val.nil?) ? "inherited from #{source_name}" : src_val
+    end
+    inherited
+  end
+
+  def self.inherited_local_props_for(dataset_name, local_datasets, fallback_zfs = nil)
+    parts = dataset_name.to_s.split('/')
+    (parts.length - 1).downto(1) do |len|
+      ancestor = parts[0...len].join('/')
+      next unless local_datasets && local_datasets.key?(ancestor)
+
+      return extract_inherited_props(ancestor, local_datasets[ancestor])
+    end
+    fallback_zfs ? fallback_zfs.inherited_zfs_props : {}
   end
   def self.local_epoch_to_datetime(e)
     return Time.at(e).to_datetime
@@ -566,31 +616,50 @@ module ZfsMgmt
     }
     return saved,saved_snaps,deleteme
   end
-  def self.zfs_managed_list(filter: '.+', properties: ['all'], property_match: { manage: true } )
+  def self.dataset_matches_property_match?(zfs, merged_props, property_match)
+    property_match.each do |k, v|
+      matched = if k.to_s.start_with?('zfsmgmt:')
+                  key_comp?(merged_props, k, v)
+                else
+                  attr_name = case k.to_sym
+                              when :send then :send_enabled
+                              when :recv then :recv_enabled
+                              else k.to_sym
+                              end
+                  match_value?(zfs.public_send(attr_name), v)
+                end
+      return false unless matched
+    end
+    true
+  end
+
+  def self.zfs_managed_list(filter: '.+', properties: ['all'], property_match: { manage: true }, include_config_only: false, local_datasets: nil)
     zfss = []
-    zfsget(properties: properties).each do |zfs_name,props|
-      unless match_filter?(zfs_name, filter)
-        next
-      end
+    seen = {}
+    datasets = local_datasets.nil? ? zfsget(properties: properties) : local_datasets
+    datasets.each do |zfs_name, props|
+      seen[zfs_name] = true
+      next unless match_filter?(zfs_name, filter)
+
       merged_props = merge_config_props(zfs_name, props)
-      zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, merged_props, config_merged: !config.nil?)
-      managed = true
-      property_match.each do |k,v|
-        matched = if k.to_s.start_with?('zfsmgmt:')
-                    key_comp?(merged_props, k, v)
-                  else
-                    attr_name = (k.to_sym == :send ? :send_enabled : k.to_sym)
-                    match_value?(zfs.public_send(attr_name), v)
-                  end
-        unless matched
-          managed = false
-          break
-        end
-      end
-      next unless managed
+      zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, merged_props, config_merged: !config.nil?, raw_zfs_props: props)
+      next unless dataset_matches_property_match?(zfs, merged_props, property_match)
+
       zfss.push(zfs)
     end
-    return zfss
+    if include_config_only && config && config.zfs.is_a?(Hash)
+      config.zfs.each_key do |zfs_name|
+        next if seen[zfs_name]
+        next unless match_filter?(zfs_name, filter)
+
+        merged_props = merge_config_props(zfs_name, {})
+        zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, merged_props, config_merged: true, raw_zfs_props: {})
+        next unless dataset_matches_property_match?(zfs, merged_props, property_match)
+
+        zfss.push(zfs)
+      end
+    end
+    zfss
   end
   def self.snapshot_policy(filter: '.+', show_destroy: false)
     zfs_managed_list(filter: filter).each do |zfs|
@@ -742,7 +811,7 @@ module ZfsMgmt
     end
   end
 
-  def self.zfs_send_to_destination(options, zfs_obj, snaps, sorted, entry, discard_first:, opt_remote:)
+  def self.zfs_send_to_destination(options, zfs_obj, snaps, _sorted, entry, discard_first:, opt_remote:)
     zfs_name = zfs_obj.name
     raw_destination = discard_first ? zfs_obj.discard_first_for(entry[:base]) : entry[:resolved]
     raw_recv_target = discard_first ? entry[:base] : raw_destination
@@ -755,120 +824,176 @@ module ZfsMgmt
     entry_remote = entry[:explicit_remote] || opt_remote || zfs_obj.remote
     entry_remote = nil if entry_remote.respond_to?(:empty?) && entry_remote.empty?
     cmd_prefix = entry_remote ? ssh_command_prefix(entry_remote, resolve_ssh_config(zfs_obj)) : []
-    is_remote = !cmd_prefix.empty?
     state_destination = format_destination(entry_remote, destination_path)
 
-    # does the destination zfs already exist?
-    remote_zfs_state = ''
+    zfs_transfer(options,
+                 zfs_obj,
+                 send_dataset: zfs_name,
+                 send_snaps: snaps,
+                 recv_dataset: destination_path,
+                 recv_target: recv_target,
+                 send_prefix: [],
+                 recv_prefix: cmd_prefix,
+                 state_source: zfs_name,
+                 state_destination: state_destination,
+                 operation: nil)
+  end
+
+  def self.zfs_recv(options, zfs, props = nil, source_snaps = nil)
+    if zfs.is_a?(ZfsMgmt::Zfs)
+      zfs_obj = zfs
+    else
+      zfs_obj = build_zfs_from_props(zfs, props)
+    end
+    zfs_name = zfs_obj.name
+    if zfs_obj.source.nil? || zfs_obj.source.to_s.empty?
+      $logger.error("fatal error: unable to determine source path for #{zfs_name}")
+      return
+    end
+    source_remote, source_path = parse_destination(zfs_obj.source)
+    if source_path.nil? || source_path.empty?
+      $logger.error("fatal error: unable to determine source path for #{zfs_name}")
+      return
+    end
+    send_prefix = source_remote ? ssh_command_prefix(source_remote, resolve_ssh_config(zfs_obj)) : []
+    state_source = format_destination(source_remote, source_path)
+
+    if source_snaps.nil?
+      begin
+        source_snaps = zfsget(zfs: source_path,
+                              types: ['snapshot'],
+                              command_prefix: send_prefix,
+                              properties: ['creation', 'userrefs'])
+      rescue ZfsGetError
+        $logger.error("unable to get source snapshot information for #{source_path}")
+        return
+      end
+    end
+    if source_snaps.nil? || source_snaps.empty?
+      $logger.debug("not processing #{zfs_name} as there are no source snapshots")
+      return
+    end
+
+    discard_first = recv_discard_first?(options, zfs_obj)
+    recv_target = zfs_name
+    if discard_first && source_path.include?('/')
+      stripped = source_path.split('/', 2).last
+      if stripped && !stripped.empty? && zfs_name.end_with?("/#{stripped}")
+        recv_target = zfs_name[0..-(stripped.length + 2)]
+      end
+    end
+
+    zfs_transfer(options,
+                 zfs_obj,
+                 send_dataset: source_path,
+                 send_snaps: source_snaps,
+                 recv_dataset: zfs_name,
+                 recv_target: recv_target,
+                 send_prefix: send_prefix,
+                 recv_prefix: [],
+                 state_source: state_source,
+                 state_destination: zfs_name,
+                 operation: 'recv')
+  end
+
+  def self.zfs_transfer(options, zfs_obj, send_dataset:, send_snaps:, recv_dataset:, recv_target:, send_prefix: [], recv_prefix: [], state_source:, state_destination:, operation: nil)
+    sorted = send_snaps.keys.sort { |a, b| send_snaps[a]['creation'] <=> send_snaps[b]['creation'] }
+    local_recv_only = (operation == 'recv' && recv_prefix.empty?)
+
+    # does the receiving zfs already exist?
+    recv_zfs_state = ''
     begin
-      recv_zfs = zfsget(zfs: destination_path,
-                        command_prefix: cmd_prefix,
-                        #properties: ['receive_resume_token'],
-                       )
+      recv_zfs = zfsget(zfs: recv_dataset,
+                        command_prefix: recv_prefix)
     rescue ZfsDatasetNotFoundError
-      $logger.debug("recv filesystem doesn't exist: #{destination_path}")
-      remote_zfs_state = 'missing'
+      $logger.debug("recv filesystem doesn't exist: #{recv_dataset}")
+      recv_zfs_state = 'missing'
     rescue ZfsGetError
-      $logger.error("unable to check remote filesystem #{destination_path}")
+      $logger.error(local_recv_only ? "unable to check local filesystem #{recv_dataset}" : "unable to check remote filesystem #{recv_dataset}")
       return
     else
-      if recv_zfs[destination_path].has_key?('receive_resume_token')
-        remote_zfs_state = recv_zfs[destination_path]['receive_resume_token']
+      if zfs_obj.type.nil? && recv_zfs[recv_dataset] && %w[filesystem volume].include?(recv_zfs[recv_dataset]['type'])
+        zfs_obj.type = recv_zfs[recv_dataset]['type']
+      end
+      if recv_zfs[recv_dataset].has_key?('receive_resume_token')
+        recv_zfs_state = recv_zfs[recv_dataset]['receive_resume_token']
       else
-        remote_zfs_state = 'present'
+        recv_zfs_state = 'present'
       end
     end
 
-    if remote_zfs_state == 'missing'
+    if recv_zfs_state == 'missing'
       # the zfs does not exist, send initial (oldest?) snapshot
-      com = []
       source = sorted[0]
       if options[:initial_snapshot] == 'newest' or
-        key_comp?(options, 'replicate') or
-        zfs_obj.send_replicate
+         key_comp?(options, 'replicate') or
+         zfs_obj.send_replicate
         source = sorted[-1]
       end
-      com += zfs_send_com(options,
-                          zfs_obj,
-                          [],
-                          source,
-                         )
-      e = zfs_send_estimate(com) if options[:verbose] == 'pv'
-      com += mbuffer_command(options, zfs_obj, side: :send, remote: is_remote) if mbuffer_enabled?(options, zfs_obj)
-      com += pv_command(options,e) if options[:verbose] == 'pv'
-      com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
- 
+      raw_send_cmd = zfs_send_args(options, zfs_obj, [], source)
+      com = build_transfer_command(options, zfs_obj, raw_send_cmd: raw_send_cmd, recv_target: recv_target, send_prefix: send_prefix, recv_prefix: recv_prefix)
       status = system_com(com)
-      record_send_state(zfs_name, status, destination: state_destination) unless options[:noop]
+      record_send_state(state_source, status, destination: state_destination, operation: operation) unless options[:noop]
       unless status && status.success?
         return
       end
 
-    elsif remote_zfs_state != 'present'
+    elsif recv_zfs_state != 'present'
       # should be resumable!
-      com = [ ]
-      com.push( ZfsMgmt.global_options[:zfs_binary], 'send', '-t', remote_zfs_state )
-      com.push('-v','-P') if key_comp?(options, 'verbose', 'send')
-      com.push('|')
-      e = zfs_send_estimate(com) if options[:verbose] == 'pv'
-      com += mbuffer_command(options, zfs_obj, side: :send, remote: is_remote) if mbuffer_enabled?(options, zfs_obj)
-      com += pv_command(options,e) if options[:verbose] == 'pv'
-
-      com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
-
+      raw_send_cmd = zfs_send_resume_args(options, recv_zfs_state)
+      com = build_transfer_command(options, zfs_obj, raw_send_cmd: raw_send_cmd, recv_target: recv_target, send_prefix: send_prefix, recv_prefix: recv_prefix)
       status = system_com(com)
-      record_send_state(zfs_name, status, destination: state_destination) unless options[:noop]
+      record_send_state(state_source, status, destination: state_destination, operation: operation) unless options[:noop]
       unless status && status.success?
         return
       end
     end
-    
-    # the zfs already exists, so update with incremental?
+
+    # the zfs already exists, so update with incremental
     begin
-      remote_snaps = zfsget(zfs: destination_path,
-                            types: ['snapshot'],
-                            command_prefix: cmd_prefix,
-                            properties: ['creation','userrefs'],
-                           )
+      recv_snaps = zfsget(zfs: recv_dataset,
+                          types: ['snapshot'],
+                          command_prefix: recv_prefix,
+                          properties: ['creation', 'userrefs'])
     rescue ZfsGetError
-      $logger.error("unable to get remote snapshot information for #{destination_path}")
+      $logger.error(local_recv_only ? "unable to get local snapshot information for #{recv_dataset}" : "unable to get remote snapshot information for #{recv_dataset}")
       return
     end
-    unless remote_snaps and remote_snaps.keys.length > 0
-      $logger.error("receiving filesystem has NO snapshots, it must be destroyed: #{destination_path}")
+    unless recv_snaps and recv_snaps.keys.length > 0
+      $logger.error("receiving filesystem has NO snapshots, it must be destroyed: #{recv_dataset}")
       return
     end
-    if remote_snaps.has_key?(sorted[-1].sub(zfs_name,destination_path))
-      $logger.info("the most recent local snapshot (#{sorted[-1]}) already exists on the remote side (#{sorted[-1].sub(zfs_name,destination_path)})")
+    newest_on_recv = sorted[-1].sub(/\A#{Regexp.escape(send_dataset)}@/, "#{recv_dataset}@")
+    if recv_snaps.has_key?(newest_on_recv)
+      if operation == 'recv'
+        $logger.info("the most recent source snapshot (#{sorted[-1]}) already exists on the receiving side (#{newest_on_recv})")
+      else
+        $logger.info("the most recent local snapshot (#{sorted[-1]}) already exists on the remote side (#{newest_on_recv})")
+      end
       return
     end
-    remote_snaps.sort_by { |k,v| -v['creation'] }.each do |rsnap,v|
-      # oldest first
-      if snaps.has_key?(rsnap.sub(destination_path,zfs_name))
+    recv_snaps.sort_by { |_k, v| -v['creation'] }.each do |rsnap, _v|
+      # newest common snapshot first
+      matching_send_snap = rsnap.sub(/\A#{Regexp.escape(recv_dataset)}@/, "#{send_dataset}@")
+      if send_snaps.has_key?(matching_send_snap)
         $logger.debug("process #{rsnap} to #{sorted[-1]}")
-        com = []
         i_opt = '-i'
         # allow the command line option for intermediary to override the property
-        if key_comp?(options,'intermediary',[true,false])
+        if key_comp?(options, 'intermediary', [true, false])
           i_opt = '-I' if key_comp?(options, 'intermediary', true)
         elsif zfs_obj.send_intermediary
           i_opt = '-I'
         end
 
-        com += zfs_send_com(options,zfs_obj,[i_opt, dq('@' + rsnap.split('@')[1])], sorted[-1])
-        e = zfs_send_estimate(com) if options[:verbose] == 'pv'
-        com += mbuffer_command(options, zfs_obj, side: :send, remote: is_remote) if mbuffer_enabled?(options, zfs_obj)
-        com += pv_command(options,e) if options[:verbose] == 'pv'
-        com += zfs_recv_com(options,[],zfs_obj,recv_target, warn_deprecated: false, command_prefix: cmd_prefix)
-
+        raw_send_cmd = zfs_send_args(options, zfs_obj, [i_opt, dq('@' + rsnap.split('@')[1])], sorted[-1])
+        com = build_transfer_command(options, zfs_obj, raw_send_cmd: raw_send_cmd, recv_target: recv_target, send_prefix: send_prefix, recv_prefix: recv_prefix)
         status = system_com(com)
-        record_send_state(zfs_name, status, destination: state_destination) unless options[:noop]
+        record_send_state(state_source, status, destination: state_destination, operation: operation) unless options[:noop]
         return
       end
-      $logger.debug("skipping remote snapshot #{rsnap} because the same snapshot doesn't exist locally #{rsnap.sub(destination_path,zfs_name)}")
+      $logger.debug("skipping #{local_recv_only ? 'local' : 'remote'} snapshot #{rsnap} because the same snapshot doesn't exist on sending side #{matching_send_snap}")
     end
-    $logger.error("receiving filesystem has no snapshots that still exists on the sending side, it must be destroyed: #{destination_path}")
-    
+    $logger.error("receiving filesystem has no snapshots that still exists on the sending side, it must be destroyed: #{recv_dataset}")
   end
   def self.mbuffer_enabled?(options, props = nil)
     opts = options || {}
@@ -938,10 +1063,10 @@ module ZfsMgmt
     mbuffer_command.push('|')
     mbuffer_command
   end
-  def self.zfs_send_com(options,props,extra_opts,target)
+  def self.zfs_send_args(options, props, extra_opts, target)
     zfs_obj = props.is_a?(ZfsMgmt::Zfs) ? props : ZfsMgmt::Zfs.from_zfs_props('', props)
-    zfs_send_com = [ ZfsMgmt.global_options[:zfs_binary], 'send' ]
-    zfs_send_com.push('-v','-P') if key_comp?(options,'verbose','send')
+    cmd = [ZfsMgmt.global_options[:zfs_binary], 'send']
+    cmd.push('-v', '-P') if key_comp?(options, 'verbose', 'send')
     send_opts = {
       'backup'      => '-b',
       'compressed'  => '-c',
@@ -952,15 +1077,61 @@ module ZfsMgmt
       'raw'         => '-w',
       'replicate'   => '-R',
     }
-    send_opts.each do |p,o|
+    send_opts.each do |p, o|
       # allow the command line options to override the properties value
-      if key_comp?(options,p,[true,false])
-        zfs_send_com.push(o) if key_comp?(options,p,true)
+      if key_comp?(options, p, [true, false])
+        cmd.push(o) if key_comp?(options, p, true)
       elsif zfs_obj.public_send("send_#{p}")
-        zfs_send_com.push(o)
+        cmd.push(o)
       end
     end
-    zfs_send_com + extra_opts + [dq(target),'|']
+    cmd + extra_opts + [dq(target)]
+  end
+
+  def self.zfs_send_resume_args(options, resume_token)
+    cmd = [ZfsMgmt.global_options[:zfs_binary], 'send', '-t', resume_token]
+    cmd.push('-v', '-P') if key_comp?(options, 'verbose', 'send')
+    cmd
+  end
+
+  def self.wrap_remote_send_command(raw_send_cmd, options, zfs_obj, command_prefix)
+    remote_cmd = raw_send_cmd.dup
+    if mbuffer_enabled?(options, zfs_obj)
+      remote_cmd << '|'
+      remote_cmd += mbuffer_command(options, zfs_obj, side: :send, remote: true)[0...-1]
+    end
+    command_prefix + [sq(remote_cmd.join(' ')), '|']
+  end
+
+  def self.zfs_send_com(options, props, extra_opts, target, command_prefix: [])
+    zfs_obj = props.is_a?(ZfsMgmt::Zfs) ? props : ZfsMgmt::Zfs.from_zfs_props('', props)
+    raw = zfs_send_args(options, zfs_obj, extra_opts, target)
+    return raw + ['|'] if command_prefix.nil? || command_prefix.empty?
+
+    wrap_remote_send_command(raw, options, zfs_obj, command_prefix)
+  end
+
+  def self.build_transfer_command(options, zfs_obj, raw_send_cmd:, recv_target:, send_prefix: [], recv_prefix: [])
+    send_is_remote = !send_prefix.empty?
+    recv_is_remote = !recv_prefix.empty?
+    is_remote = send_is_remote || recv_is_remote
+    use_mbuffer = mbuffer_enabled?(options, zfs_obj)
+
+    estimate = zfs_send_estimate(raw_send_cmd + ['|'], command_prefix: send_prefix) if options[:verbose] == 'pv'
+
+    com = []
+    if send_is_remote
+      com += wrap_remote_send_command(raw_send_cmd, options, zfs_obj, send_prefix)
+    else
+      com += raw_send_cmd + ['|']
+      com += mbuffer_command(options, zfs_obj, side: :send, remote: is_remote) if use_mbuffer
+    end
+    if send_is_remote && !recv_is_remote && use_mbuffer
+      com += mbuffer_command(options, zfs_obj, side: :recv, remote: true)
+    end
+    com += pv_command(options, estimate) if options[:verbose] == 'pv'
+    com += zfs_recv_com(options, [], zfs_obj, recv_target, warn_deprecated: false, command_prefix: recv_prefix)
+    com
   end
   def self.prop_off?(v)
     ['false','off'].include?(v)
@@ -1077,14 +1248,18 @@ module ZfsMgmt
     zfs_obj = props.is_a?(ZfsMgmt::Zfs) ? props : ZfsMgmt::Zfs.from_zfs_props('', props || {})
     ssh_command_prefix(remote, resolve_ssh_config(zfs_obj))
   end
-  def self.zfs_send_estimate(com)
+  def self.zfs_send_estimate(com, command_prefix: [])
     lcom = com.dup
-    lcom.pop() # remove the pipe symbol
+    lcom.pop() if lcom.last == '|' # remove the pipe symbol
     precom = [ lcom.shift, lcom.shift ]
     lcom.unshift('-P') unless lcom.include?('-P')
     lcom.unshift('-n')
-    lcom.push('2>&1')
     lcom = precom + lcom
+    if command_prefix && !command_prefix.empty?
+      lcom = command_prefix + [sq(lcom.join(' ')), '2>&1']
+    else
+      lcom.push('2>&1')
+    end
     $logger.debug(lcom.join(' '))
     total = 0
     %x[#{lcom.join(' ')}].each_line do |l|
@@ -1180,6 +1355,83 @@ module ZfsMgmt
       zfs_send(options, zfs)
     end
   end
+  def self.zfs_recv_all(options)
+    filter = options[:filter] || '.+'
+    all_local = zfsget(properties: ['all'])
+    candidates = zfs_managed_list(filter: filter,
+                                  property_match: { recv_enabled: true },
+                                  include_config_only: true,
+                                  local_datasets: all_local)
+    processed_local = {}
+
+    candidates.sort_by { |z| [z.name.count('/'), z.name] }.each do |zfs|
+      unless zfs.recv_enabled
+        $logger.debug("skipping filesystem with recv disabled: #{zfs.name}")
+        next
+      end
+      next if processed_local[zfs.name]
+
+      if zfs.source.nil? || zfs.source.to_s.empty?
+        $logger.error("#{zfs.name}: you must specify a source zfs path via the user property zfsmgmt:source, skipping")
+        next
+      end
+
+      source_remote, source_path = parse_destination(zfs.source)
+      if source_path.nil? || source_path.empty?
+        $logger.error("#{zfs.name}: you must specify a source zfs path via the user property zfsmgmt:source, skipping")
+        next
+      end
+
+      enumerate_descendants = !zfs.recv_local_only? && !zfs.send_replicate && !key_comp?(options, 'replicate', true)
+      unless enumerate_descendants
+        processed_local[zfs.name] = true
+        zfs_recv(options, zfs)
+        next
+      end
+
+      send_prefix = source_remote ? ssh_command_prefix(source_remote, resolve_ssh_config(zfs)) : []
+      begin
+        remote_datasets = zfs_list_datasets(zfs: source_path,
+                                            types: ['filesystem', 'volume'],
+                                            recursive: true,
+                                            command_prefix: send_prefix)
+      rescue ZfsGetError
+        $logger.error("unable to list source datasets for #{source_path}")
+        next
+      end
+
+      remote_datasets.each do |remote_ds, remote_type|
+        if remote_ds == source_path
+          child_local = zfs.name
+          child_zfs = zfs
+          child_zfs.type = remote_type if child_zfs.type.nil? && %w[filesystem volume].include?(remote_type)
+        elsif remote_ds.start_with?("#{source_path}/")
+          rel = remote_ds.delete_prefix("#{source_path}/")
+          child_local = "#{zfs.name}/#{rel}"
+          if all_local.key?(child_local)
+            raw = all_local[child_local].dup
+            raw['type'] ||= remote_type if %w[filesystem volume].include?(remote_type)
+            child_zfs = build_zfs_from_props(child_local, raw)
+          else
+            raw = inherited_local_props_for(child_local, all_local, zfs)
+            raw['type'] = remote_type if %w[filesystem volume].include?(remote_type)
+            child_zfs = build_zfs_from_props(child_local, raw)
+          end
+        else
+          next
+        end
+
+        next unless match_filter?(child_local, filter)
+        next unless child_zfs.recv_enabled
+        expected_source = format_destination(source_remote, remote_ds)
+        next unless child_zfs.source == expected_source
+        next if processed_local[child_local]
+
+        processed_local[child_local] = true
+        zfs_recv(options, child_zfs)
+      end
+    end
+  end
   def self.lock(options)
     # open lock file, try to lock file until lock_wait has expired or
     # lock is obtained, write pid?
@@ -1253,7 +1505,7 @@ module ZfsMgmt
     "#{source}#{SEND_STATE_KEY_SEPARATOR}#{destination}"
   end
 
-  def self.record_send_state(zfs, status, destination: nil, timestamp: Time.now.to_i)
+  def self.record_send_state(zfs, status, destination: nil, timestamp: Time.now.to_i, operation: nil)
     exit_code = if status.nil?
                   1
                 elsif status.respond_to?(:exitstatus)
@@ -1268,6 +1520,7 @@ module ZfsMgmt
       'timestamp' => timestamp.to_i,
       'exit' => exit_code
     }
+    payload['operation'] = operation.to_s if operation && !operation.to_s.empty?
     store = send_state_store
     store.transaction do
       store[key] = JSON.generate(payload)
@@ -1337,14 +1590,15 @@ module ZfsMgmt
                   0
                 end
         label = send_state_key(data['source'] || key, data['destination'])
-        puts "#{state} \"zfs_send #{label}\" age=#{age};#{SEND_WARN_SECONDS};#{SEND_CRIT_SECONDS} last send #{time_str} exit #{exit_code}"
+        op = (data['operation'] == 'recv') ? 'recv' : 'send'
+        puts "#{state} \"zfs_#{op} #{label}\" age=#{age};#{SEND_WARN_SECONDS};#{SEND_CRIT_SECONDS} last #{op} #{time_str} exit #{exit_code}"
       end
     else
       return if entries.empty?
       table = Text::Table.new
-      table.head = ['source', 'destination', 'timestamp', 'exit']
+      table.head = ['operation', 'source', 'destination', 'timestamp', 'exit']
       table.rows = entries.map do |key, data|
-        [data['source'] || key, data['destination'].to_s, local_epoch_to_datetime(data['timestamp'].to_i), data['exit']]
+        [data['operation'] || 'send', data['source'] || key, data['destination'].to_s, local_epoch_to_datetime(data['timestamp'].to_i), data['exit']]
       end
       print table.to_s
     end

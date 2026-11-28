@@ -120,3 +120,12 @@ destination = ["backup/archive", "zfs_recv@offsite.example.com:offsite/archive"]
 mbuffer = false
 restic_backup = true
 restic_repository = "/srv/restic/zfs"
+
+# Receiving parent dataset: source inherits to children for `zfsmgr recv all`
+[zfs."backup/prod"]
+source = "zfs_send@prod.example.com:tank"
+
+[zfs."backup/prod/data"]
+recv = true                     # true, false, or "local" (only recv this dataset)
+recv_unmount = true
+recv_state = true

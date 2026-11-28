@@ -26,6 +26,8 @@ RSpec.describe ZfsMgmt::Zfs do
         "send",
         "remote",
         "destination",
+        "recv",
+        "source",
         "send_intermediary",
         "send_backup",
         "send_compressed",
@@ -53,6 +55,8 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(props["recv_state"]["default"]).to eq(true)
       expect(props["mbuffer"]["default"]).to eq(true)
       expect(props["send"]["type"]).to eq("boolean")
+      expect(props["recv"]["type"]).to eq("boolean")
+      expect(props["source"]["type"]).to eq("string")
       expect(props["excludes"]["type"]).to eq("array")
       expect(props["excludes"]["items"]).to eq({ "type" => "string" })
       expect(props["overrides"]["type"]).to eq("object")
@@ -72,6 +76,9 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(zfs.snap_timestamp).to eq("%FT%T%z")
       expect(zfs.send_enabled).to eq(false)
       expect(zfs.send?).to eq(false)
+      expect(zfs.recv_enabled).to eq(false)
+      expect(zfs.recv?).to eq(false)
+      expect(zfs.source).to be_nil
       expect(zfs.volume?).to eq(false)
       expect(zfs.recv_state).to eq(true)
       expect(zfs.mbuffer).to eq(true)
@@ -83,10 +90,12 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(zfs.restic_backup).to eq(false)
     end
 
-    it "accepts :send key in initializer without clobbering Object#send" do
-      zfs = described_class.new(name: "tank/data", send: true)
+    it "accepts :send and :recv keys in initializer without clobbering Object#send" do
+      zfs = described_class.new(name: "tank/data", send: true, recv: true)
       expect(zfs.send_enabled).to eq(true)
       expect(zfs.send?).to eq(true)
+      expect(zfs.recv_enabled).to eq(true)
+      expect(zfs.recv?).to eq(true)
       expect(zfs.send(:name)).to eq("tank/data")
       expect(zfs).to be_valid
     end
@@ -124,6 +133,13 @@ RSpec.describe ZfsMgmt::Zfs do
       expect(described_class.new(name: "tank/data", destination: ["backup/tank", "host:offsite/tank"])).to be_valid
       expect(described_class.new(name: "tank/data", destination: 123)).not_to be_valid
       expect(described_class.new(name: "tank/data", destination: [123])).not_to be_valid
+    end
+
+    it "validates source accepts a string and rejects other types" do
+      expect(described_class.new(name: "backup/data", source: "tank/data")).to be_valid
+      expect(described_class.new(name: "backup/data", source: "user@host:tank/data")).to be_valid
+      expect(described_class.new(name: "backup/data", source: 123)).not_to be_valid
+      expect(described_class.new(name: "backup/data", source: ["tank/data"])).not_to be_valid
     end
 
     it "validates ssh_config types without validating ssh option names or values" do
@@ -388,6 +404,113 @@ RSpec.describe ZfsMgmt::Zfs do
           { resolved: "root@fallback:backup/pool/fs", base: "root@fallback:backup/pool", explicit_remote: nil },
           { resolved: "explicit@host:offsite/pool/fs", base: "explicit@host:offsite/pool", explicit_remote: "explicit@host" }
         ])
+      end
+    end
+
+    context "recv and source interpretation" do
+      it "enables recv when true/on with local or inherited source, supports recv=local, and disables when received or replicated" do
+        local_recv = described_class.from_zfs_props("backup/fs", {
+          "zfsmgmt:recv" => "true",
+          "zfsmgmt:recv@source" => "local"
+        })
+        expect(local_recv.recv_enabled).to eq(true)
+
+        inherited_recv = described_class.from_zfs_props("backup/fs/sub", {
+          "zfsmgmt:recv" => "on",
+          "zfsmgmt:recv@source" => "inherited from backup/fs"
+        })
+        expect(inherited_recv.recv_enabled).to eq(true)
+
+        received_recv = described_class.from_zfs_props("backup/fs", {
+          "zfsmgmt:recv" => "true",
+          "zfsmgmt:recv@source" => "received"
+        })
+        expect(received_recv.recv_enabled).to eq(false)
+
+        local_only = described_class.from_zfs_props("backup/fs", {
+          "zfsmgmt:recv" => "local",
+          "zfsmgmt:recv@source" => "local"
+        })
+        expect(local_only.recv_enabled).to eq(true)
+        expect(local_only.recv_local_only?).to eq(true)
+        expect(local_recv.recv_local_only?).to eq(false)
+        expect(inherited_recv.recv_local_only?).to eq(false)
+
+        inherited_local = described_class.from_zfs_props("backup/fs/child", {
+          "zfsmgmt:recv" => "local",
+          "zfsmgmt:recv@source" => "inherited from backup/fs"
+        })
+        expect(inherited_local.recv_enabled).to eq(false)
+
+        rep_child = described_class.from_zfs_props("backup/rep/child", {
+          "zfsmgmt:recv" => "true",
+          "zfsmgmt:recv@source" => "inherited from backup/rep",
+          "zfsmgmt:send_replicate" => "true",
+          "zfsmgmt:send_replicate@source" => "inherited from backup/rep"
+        })
+        expect(rep_child.recv_enabled).to eq(false)
+      end
+
+      it "resolves local, inherited, received, and [user@]host:path source values" do
+        local_src = described_class.from_zfs_props("backup/sub/fs", {
+          "zfsmgmt:source" => "tank/pool",
+          "zfsmgmt:source@source" => "local"
+        })
+        expect(local_src.source).to eq("tank/pool/fs")
+        expect(local_src.source_remote).to be_nil
+        expect(local_src.source_path).to eq("tank/pool/fs")
+        expect(local_src.base_source).to eq("tank/pool")
+        expect(local_src.resolved_source("other/pool")).to eq("other/pool/fs")
+
+        inherited_src = described_class.from_zfs_props("backup/sub/fs", {
+          "zfsmgmt:source" => "zfs_send@prodhost:tank",
+          "zfsmgmt:source@source" => "inherited from backup"
+        })
+        expect(inherited_src.source).to eq("zfs_send@prodhost:tank/backup/sub/fs")
+        expect(inherited_src.source_remote).to eq("zfs_send@prodhost")
+        expect(inherited_src.source_path).to eq("tank/backup/sub/fs")
+        expect(inherited_src.source_explicit_remote).to eq("zfs_send@prodhost")
+        expect(inherited_src.base_source).to eq("zfs_send@prodhost:tank")
+        expect(inherited_src.resolved_source("otherhost:other/src")).to eq("otherhost:other/src/backup/sub/fs")
+
+        host_only = described_class.from_zfs_props("backup/fs", {
+          "zfsmgmt:source" => "prodhost:tank",
+          "zfsmgmt:source@source" => "local"
+        })
+        expect(host_only.source).to eq("prodhost:tank/fs")
+        expect(host_only.source_remote).to eq("prodhost")
+        expect(host_only.source_path).to eq("tank/fs")
+
+        received_src = described_class.from_zfs_props("backup/fs", {
+          "zfsmgmt:source" => "tank/pool",
+          "zfsmgmt:source@source" => "received"
+        })
+        expect(received_src.source).to be_nil
+        expect(received_src.base_source).to be_nil
+      end
+
+      it "builds inherited_zfs_props rewriting local sources to inherited from dataset" do
+        parent = described_class.from_zfs_props("backup/prod", {
+          "type" => "filesystem",
+          "zfsmgmt:recv" => "true",
+          "zfsmgmt:recv@source" => "local",
+          "zfsmgmt:source" => "srchost:tank",
+          "zfsmgmt:source@source" => "local",
+          "zfsmgmt:policy" => "7d",
+          "zfsmgmt:policy@source" => "inherited from backup",
+          "zfsmgmt:send" => "true",
+          "zfsmgmt:send@source" => "received"
+        })
+        expect(parent.inherited_zfs_props).to eq({
+          "zfsmgmt:recv" => "true",
+          "zfsmgmt:recv@source" => "inherited from backup/prod",
+          "zfsmgmt:source" => "srchost:tank",
+          "zfsmgmt:source@source" => "inherited from backup/prod",
+          "zfsmgmt:policy" => "7d",
+          "zfsmgmt:policy@source" => "inherited from backup",
+          "zfsmgmt:send" => "true",
+          "zfsmgmt:send@source" => "received"
+        })
       end
     end
 

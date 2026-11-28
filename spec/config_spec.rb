@@ -21,7 +21,7 @@ RSpec.describe ZfsMgmt::Config do
       expect(props["mbuffer_size"]["type"]).to eq("string")
       expect(props["zfs"]["type"]).to eq("object")
       expect(props["zfs"]["additionalProperties"]["type"]).to eq("object")
-      expect(props["zfs"]["additionalProperties"]["properties"].keys).to include("send", "destination", "remote", "excludes", "overrides", "ssh_config", "mbuffer", "mbuffer_size")
+      expect(props["zfs"]["additionalProperties"]["properties"].keys).to include("send", "destination", "recv", "source", "remote", "excludes", "overrides", "ssh_config", "mbuffer", "mbuffer_size")
     end
 
     it "applies sensible defaults and validates valid configs" do
@@ -264,6 +264,45 @@ RSpec.describe ZfsMgmt::Config do
       bad_dest_arr = described_class.from_hash("zfs" => { "pool/ds" => { "destination" => ["backup/a", 456] } })
       expect(bad_dest_arr).not_to be_valid
       expect(bad_dest_arr.errors[:zfs].join).to include("pool/ds: destination must be a string or an array of strings")
+
+      bad_src_int = described_class.from_hash("zfs" => { "pool/ds" => { "source" => 123 } })
+      expect(bad_src_int).not_to be_valid
+      expect(bad_src_int.errors[:zfs].join).to include("pool/ds: source must be a string")
+
+      bad_src_arr = described_class.from_hash("zfs" => { "pool/ds" => { "source" => ["tank/a"] } })
+      expect(bad_src_arr).not_to be_valid
+      expect(bad_src_arr.errors[:zfs].join).to include("pool/ds: source must be a string")
+    end
+
+    it "supports recv and source in TOML config including inheritance and [user@]host:path syntax" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "10-recv.toml"), <<~TOML)
+          [zfs."backup/prod"]
+          source = "zfs_send@prod.example.com:tank"
+
+          [zfs."backup/prod/data"]
+          recv = true
+
+          [zfs."backup/prod/only"]
+          recv = "local"
+
+          [zfs."backup/prod/only/child"]
+          manage = true
+        TOML
+
+        cfg = described_class.load_dir(dir)
+        expect(cfg).to be_valid
+
+        data = cfg.zfs["backup/prod/data"]
+        expect(data.recv_enabled).to eq(true)
+        expect(data.source).to eq("zfs_send@prod.example.com:tank/prod/data")
+        expect(data.source_remote).to eq("zfs_send@prod.example.com")
+        expect(data.source_path).to eq("tank/prod/data")
+
+        expect(cfg.zfs["backup/prod/only"].recv_enabled).to eq(true)
+        expect(cfg.zfs["backup/prod/only/child"].recv_enabled).to eq(false)
+        expect(cfg.zfs["backup/prod/only/child"].source).to eq("zfs_send@prod.example.com:tank/prod/only/child")
+      end
     end
 
     it "supports array destinations in TOML config including inheritance and child override" do
@@ -598,7 +637,10 @@ RSpec.describe ZfsMgmt::Config do
       expect(cfg.overrides).to eq({ "canmount" => "noauto", "readonly" => "on" })
       expect(cfg.override_options).to eq(["canmount=noauto", "readonly=on"])
       expect(cfg.ssh_config).to eq({ "Compression" => "yes" })
-      expect(cfg.zfs.keys).to match_array(%w[tank tank/data tank/archive])
+      expect(cfg.zfs.keys).to match_array(%w[tank tank/data tank/archive backup/prod backup/prod/data])
+      expect(cfg.zfs["backup/prod"].source).to eq("zfs_send@prod.example.com:tank/prod")
+      expect(cfg.zfs["backup/prod/data"].recv_enabled).to eq(true)
+      expect(cfg.zfs["backup/prod/data"].source).to eq("zfs_send@prod.example.com:tank/prod/data")
       expect(cfg.zfs["tank"].policy).to eq("10y6m4w30d24h")
       expect(cfg.zfs["tank/data"].send_enabled).to eq(true)
       expect(cfg.zfs["tank/data"].manage).to eq(true)
@@ -647,6 +689,14 @@ RSpec.describe ZfsMgmt::Config do
         { "type" => "string" },
         { "type" => "array", "items" => { "type" => "string" } }
       ])
+
+      recv_schema = zfs_schema.dig("properties", "recv")
+      expect(recv_schema["oneOf"]).to eq([
+        { "type" => "boolean" },
+        { "type" => "string", "enum" => %w[local] }
+      ])
+
+      expect(zfs_schema.dig("properties", "source", "type")).to eq("string")
     end
 
     it "matches the committed schema/config.schema.json file" do
