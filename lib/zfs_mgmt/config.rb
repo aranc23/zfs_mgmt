@@ -292,7 +292,7 @@ module ZfsMgmt
       schema
     end
 
-    def self.load_files(paths)
+    def self.load_files(paths, strict: false)
       merged = {}
       paths.sort.each do |path|
         begin
@@ -314,6 +314,15 @@ module ZfsMgmt
         DeepMerge.deep_merge!(parsed, merged, overwrite_arrays: true)
       end
 
+      if strict
+        schema_errors = validate_schema(merged)
+        unless schema_errors.empty?
+          msg = "invalid configuration: #{schema_errors.join('; ')}"
+          $logger&.error(msg)
+          raise ConfigError, msg
+        end
+      end
+
       config = from_hash(merged)
       unless config.valid?
         msg = "invalid configuration: #{config.errors.full_messages.join('; ')}"
@@ -331,11 +340,137 @@ module ZfsMgmt
     end
 
     def self.validate_file(path)
-      load_files([path])
+      load_files([path], strict: true)
       { path: path, valid: true, error: nil }
     rescue ConfigError => e
       { path: path, valid: false, error: e.message }
     end
+
+    def self.validate_schema(data, schema = config_json_schema, path = nil)
+      return [] unless schema.is_a?(Hash)
+
+      label = path || 'root'
+      if schema.key?('type')
+        expected_types = Array(schema['type'])
+        unless expected_types.any? { |t| json_type_matches?(data, t) }
+          return ["#{label}: expected #{expected_types.join(' or ')}, got #{json_type_name(data)}"]
+        end
+      end
+
+      errors = []
+
+      if schema['enum'].is_a?(Array) && !schema['enum'].include?(data)
+        errors << "#{label}: must be one of #{schema['enum'].map(&:inspect).join(', ')}"
+      end
+
+      if schema['pattern'].is_a?(String) && data.is_a?(String)
+        ruby_pattern = schema['pattern'].sub(/\A\^/, '\\A').sub(/\$\z/, '\\z')
+        unless Regexp.new(ruby_pattern).match?(data)
+          errors << "#{label}: does not match pattern #{schema['pattern']}"
+        end
+      end
+
+      if schema['oneOf'].is_a?(Array)
+        matches = schema['oneOf'].count { |sub_schema| validate_schema(data, sub_schema, path).empty? }
+        unless matches == 1
+          expected_desc = schema['oneOf'].map { |s| describe_schema_option(s) }.join(' or ')
+          errors << (matches > 1 ? "#{label}: matched multiple oneOf schemas" : "#{label}: expected #{expected_desc}, got #{json_type_name(data)}")
+        end
+      end
+
+      if schema['anyOf'].is_a?(Array)
+        unless schema['anyOf'].any? { |sub_schema| validate_schema(data, sub_schema, path).empty? }
+          expected_desc = schema['anyOf'].map { |s| describe_schema_option(s) }.join(' or ')
+          errors << "#{label}: expected #{expected_desc}, got #{json_type_name(data)}"
+        end
+      end
+
+      if schema['allOf'].is_a?(Array)
+        schema['allOf'].each { |sub_schema| errors.concat(validate_schema(data, sub_schema, path)) }
+      end
+
+      if data.is_a?(Hash)
+        str_data = data.each_with_object({}) { |(k, v), h| h[k.to_s] = v }
+
+        if schema['required'].is_a?(Array)
+          schema['required'].each do |req_key|
+            req_str = req_key.to_s
+            errors << "#{format_schema_path(path, req_str)}: is required" unless str_data.key?(req_str)
+          end
+        end
+
+        props = schema['properties'].is_a?(Hash) ? schema['properties'] : {}
+        add_props = schema['additionalProperties']
+
+        str_data.each do |key, val|
+          child_path = format_schema_path(path, key)
+          if props.key?(key)
+            errors.concat(validate_schema(val, props[key], child_path))
+          elsif add_props == false
+            errors << "#{child_path}: additional property '#{key}' is not allowed"
+          elsif add_props.is_a?(Hash)
+            errors.concat(validate_schema(val, add_props, child_path))
+          end
+        end
+      end
+
+      if data.is_a?(Array) && schema['items'].is_a?(Hash)
+        data.each_with_index do |item, idx|
+          errors.concat(validate_schema(item, schema['items'], "#{label}[#{idx}]"))
+        end
+      end
+
+      errors
+    end
+
+    def self.format_schema_path(parent, key)
+      segment = key.match?(/\A[A-Za-z0-9_]+\z/) ? key : key.inspect
+      parent.nil? ? segment : "#{parent}.#{segment}"
+    end
+    private_class_method :format_schema_path
+
+    def self.json_type_matches?(value, expected_type)
+      case expected_type
+      when 'object' then value.is_a?(Hash)
+      when 'array' then value.is_a?(Array)
+      when 'string' then value.is_a?(String)
+      when 'boolean' then value == true || value == false
+      when 'integer' then value.is_a?(Integer)
+      when 'number' then value.is_a?(Numeric)
+      when 'null' then value.nil?
+      else true
+      end
+    end
+    private_class_method :json_type_matches?
+
+    def self.json_type_name(value)
+      case value
+      when Hash then 'object'
+      when Array then 'array'
+      when String then 'string'
+      when TrueClass, FalseClass then 'boolean'
+      when Integer then 'integer'
+      when Numeric then 'number'
+      when NilClass then 'null'
+      else value.class.to_s
+      end
+    end
+    private_class_method :json_type_name
+
+    def self.describe_schema_option(sub_schema)
+      return 'valid option' unless sub_schema.is_a?(Hash)
+
+      if sub_schema['enum'].is_a?(Array)
+        sub_schema['enum'].map(&:inspect).join(', ')
+      elsif sub_schema['type'] == 'array' && sub_schema.dig('items', 'type')
+        "array of #{sub_schema.dig('items', 'type')}s"
+      elsif sub_schema.key?('type')
+        Array(sub_schema['type']).join(' or ')
+      else
+        'valid option'
+      end
+    end
+    private_class_method :describe_schema_option
 
     private
 

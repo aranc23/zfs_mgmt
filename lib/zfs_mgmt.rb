@@ -348,7 +348,7 @@ module ZfsMgmt
 
     if all_valid && target_files.length > 1
       begin
-        ZfsMgmt::Config.load_files(target_files)
+        ZfsMgmt::Config.load_files(target_files, strict: true)
       rescue ConfigError => e
         all_valid = false
         err.puts("INVALID (merged): #{e.message}") unless quiet
