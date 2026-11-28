@@ -914,5 +914,78 @@ RSpec.describe ZfsMgmt::Config do
         expect(status.exitstatus).to eq(1)
       end
     end
+
+    it "rejects unknown top-level/per-dataset keys and per-dataset schema violations matching schema/config.schema.json" do
+      require "open3"
+      require "rbconfig"
+
+      example_path = File.expand_path("../examples/config.toml", __dir__)
+      expect(described_class.validate_file(example_path)).to eq({
+        path: example_path,
+        valid: true,
+        error: nil
+      })
+
+      Dir.mktmpdir do |dir|
+        # Issue #62 exact reproduction: ["data/stuff"] instead of [zfs."data/stuff"]
+        repro_path = File.join(dir, "50-puppet.toml")
+        File.write(repro_path, <<~TOML)
+          ["data/stuff"]
+          recv = false
+          send = false
+        TOML
+        res_repro = described_class.validate_file(repro_path)
+        expect(res_repro[:valid]).to eq(false)
+        expect(res_repro[:error]).to match(/additional property 'data\/stuff' is not allowed/)
+
+        out, err, status = Open3.capture3(RbConfig.ruby, "-I", lib_dir, zfsmgr_bin, "config", "validate", repro_path)
+        expect(status.exitstatus).to eq(1)
+        expect(err).to include("additional property 'data/stuff' is not allowed")
+        expect(out).to eq("")
+
+        out, err, status = Open3.capture3(
+          RbConfig.ruby, "-I", lib_dir, zfsmgr_bin,
+          "config", "validate", "--quiet", "--loglevel", "none", repro_path
+        )
+        expect(status.exitstatus).to eq(1)
+        expect(out).to eq("")
+        expect(err).to eq("")
+
+        # Unknown top-level scalar key
+        unknown_top = File.join(dir, "unknown_top.toml")
+        File.write(unknown_top, "bogus = true\n")
+        expect(described_class.validate_file(unknown_top)[:valid]).to eq(false)
+        expect(described_class.validate_file(unknown_top)[:error]).to match(/additional property 'bogus' is not allowed/)
+
+        # Unknown per-dataset property (typo)
+        unknown_zfs_prop = File.join(dir, "unknown_zfs_prop.toml")
+        File.write(unknown_zfs_prop, <<~TOML)
+          [zfs."data/stuff"]
+          snaphsot = true
+        TOML
+        res_typo = described_class.validate_file(unknown_zfs_prop)
+        expect(res_typo[:valid]).to eq(false)
+        expect(res_typo[:error]).to match(/zfs\."data\/stuff"\.snaphsot: additional property 'snaphsot' is not allowed/)
+
+        # Per-dataset schema type, oneOf, pattern, and nested object violations
+        invalid_cases = {
+          "manage_str.toml" => ["[zfs.\"data/stuff\"]\nmanage = \"true\"\n", /manage: expected boolean, got string/],
+          "send_bogus.toml" => ["[zfs.\"data/stuff\"]\nsend = \"bogus\"\n", /send: expected boolean or "local", got string/],
+          "recv_int.toml" => ["[zfs.\"data/stuff\"]\nrecv = 123\n", /recv: expected boolean or "local", got integer/],
+          "snapshot_bad.toml" => ["[zfs.\"data/stuff\"]\nsnapshot = \"invalid\"\n", /snapshot: expected boolean or "recursive", "local", got string/],
+          "policy_multiline.toml" => ["[zfs.\"data/stuff\"]\npolicy = \"7d\\nbogus\"\n", /policy: does not match pattern/],
+          "dest_int_arr.toml" => ["[zfs.\"data/stuff\"]\ndestination = [123]\n", /destination: expected string or array of strings, got array/],
+          "override_int.toml" => ["[zfs.\"data/stuff\".overrides]\ncanmount = 123\n", /overrides\.canmount: expected string, got integer/]
+        }
+
+        invalid_cases.each do |filename, (content, pattern)|
+          p = File.join(dir, filename)
+          File.write(p, content)
+          res = described_class.validate_file(p)
+          expect(res[:valid]).to eq(false), "expected #{filename} to fail validation"
+          expect(res[:error]).to match(pattern), "expected #{filename} error #{res[:error].inspect} to match #{pattern}"
+        end
+      end
+    end
   end
 end

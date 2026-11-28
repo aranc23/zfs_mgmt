@@ -218,7 +218,7 @@ The schema file is also bundled inside the `zfs_mgmt` gem so tools like `taplo` 
 
 ### Validation
 
-Validate one or more TOML configuration files (or all `*.toml` files in the active configuration directory) with `zfsmgr config validate`:
+Validate one or more TOML configuration files (or all `*.toml` files in the active configuration directory) against both TOML syntax and the JSON Schema (`schema/config.schema.json`, rejecting unknown keys and type/value mismatches) with `zfsmgr config validate`:
 
     $ zfsmgr config validate /etc/zfsmgr/50-puppet.toml
     $ zfsmgr config validate --all
