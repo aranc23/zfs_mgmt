@@ -739,4 +739,180 @@ RSpec.describe ZfsMgmt::Config do
       Rake.application = nil
     end
   end
+
+  describe ".validate_file, ZfsMgmt.validate_config, and zfsmgr config validate" do
+    let(:lib_dir) { File.expand_path("../lib", __dir__) }
+    let(:zfsmgr_bin) { File.expand_path("../bin/zfsmgr", __dir__) }
+
+    it "validates valid, comment-only, invalid-TOML, invalid-schema, and missing files via .validate_file" do
+      Dir.mktmpdir do |dir|
+        valid_path = File.join(dir, "valid.toml")
+        File.write(valid_path, <<~TOML)
+          mbuffer = true
+          [zfs."tank/data"]
+          manage = true
+          policy = "7d"
+        TOML
+        expect(described_class.validate_file(valid_path)).to eq({
+          path: valid_path,
+          valid: true,
+          error: nil
+        })
+
+        comments_only = File.join(dir, "comments.toml")
+        File.write(comments_only, "# Managed by Puppet\n")
+        expect(described_class.validate_file(comments_only)).to eq({
+          path: comments_only,
+          valid: true,
+          error: nil
+        })
+
+        bad_toml = File.join(dir, "bad_syntax.toml")
+        File.write(bad_toml, "mbuffer = [unterminated\n")
+        res_syntax = described_class.validate_file(bad_toml)
+        expect(res_syntax[:valid]).to eq(false)
+        expect(res_syntax[:error]).to match(/failed to parse config file/)
+
+        bad_schema = File.join(dir, "bad_schema.toml")
+        File.write(bad_schema, <<~TOML)
+          [zfs."tank/data"]
+          strategy = "bogus"
+        TOML
+        res_schema = described_class.validate_file(bad_schema)
+        expect(res_schema[:valid]).to eq(false)
+        expect(res_schema[:error]).to match(/invalid configuration/)
+
+        missing_path = File.join(dir, "does_not_exist.toml")
+        res_missing = described_class.validate_file(missing_path)
+        expect(res_missing[:valid]).to eq(false)
+        expect(res_missing[:error]).to match(/failed to read config file/)
+      end
+    end
+
+    it "validates explicit files (including non-.toml temp paths) and --all directories via ZfsMgmt.validate_config" do
+      require "stringio"
+
+      Dir.mktmpdir do |dir|
+        temp_no_ext = File.join(dir, "50-puppet.toml20261128-1234-abc")
+        File.write(temp_no_ext, "mbuffer = false\n")
+
+        valid_toml = File.join(dir, "00-base.toml")
+        File.write(valid_toml, "mbuffer = true\n")
+
+        invalid_toml = File.join(dir, "10-broken.toml")
+        File.write(invalid_toml, "mbuffer = \"yes\"\n")
+
+        out = StringIO.new
+        err = StringIO.new
+        expect(ZfsMgmt.validate_config(files: [temp_no_ext], out: out, err: err)).to eq(true)
+        expect(out.string).to include("OK: #{temp_no_ext}")
+        expect(err.string).to eq("")
+
+        # Continues validating remaining files when one fails
+        out = StringIO.new
+        err = StringIO.new
+        expect(ZfsMgmt.validate_config(files: [invalid_toml, temp_no_ext], out: out, err: err)).to eq(false)
+        expect(err.string).to include("INVALID: #{invalid_toml}")
+        expect(out.string).to include("OK: #{temp_no_ext}")
+
+        # Quiet mode suppresses all stdout/stderr output
+        out = StringIO.new
+        err = StringIO.new
+        expect(ZfsMgmt.validate_config(files: [invalid_toml], quiet: true, out: out, err: err)).to eq(false)
+        expect(out.string).to eq("")
+        expect(err.string).to eq("")
+
+        # --all validates all *.toml files in config_dir
+        out = StringIO.new
+        err = StringIO.new
+        expect(ZfsMgmt.validate_config(all: true, config_dir: dir, out: out, err: err)).to eq(false)
+        expect(out.string).to include("OK: #{valid_toml}")
+        expect(err.string).to include("INVALID: #{invalid_toml}")
+
+        File.delete(invalid_toml)
+        out = StringIO.new
+        err = StringIO.new
+        expect(ZfsMgmt.validate_config(all: true, config_dir: dir, out: out, err: err)).to eq(true)
+        expect(out.string).to include("OK: #{valid_toml}")
+
+        # Neither files nor --all returns false
+        out = StringIO.new
+        err = StringIO.new
+        expect(ZfsMgmt.validate_config(out: out, err: err)).to eq(false)
+        expect(err.string).to include("specify one or more config files or --all")
+      end
+
+      Dir.mktmpdir do |empty_dir|
+        out = StringIO.new
+        err = StringIO.new
+        expect(ZfsMgmt.validate_config(all: true, config_dir: empty_dir, out: out, err: err)).to eq(true)
+        expect(out.string).to include("No config files found")
+      end
+    end
+
+    it "runs zfsmgr config validate CLI with expected exit codes and --quiet/--loglevel none/--all behavior" do
+      require "open3"
+      require "rbconfig"
+
+      Dir.mktmpdir do |dir|
+        valid_temp = File.join(dir, "puppet-tmp-file")
+        File.write(valid_temp, <<~TOML)
+          mbuffer = true
+          [zfs."tank/data"]
+          send = true
+          destination = "backup/tank"
+        TOML
+
+        invalid_file = File.join(dir, "50-invalid.toml")
+        File.write(invalid_file, "[[zfs.\"tank/data\"]]\nsend = true\n")
+
+        out, err, status = Open3.capture3(RbConfig.ruby, "-I", lib_dir, zfsmgr_bin, "config", "validate", valid_temp)
+        expect(status.exitstatus).to eq(0), "stderr: #{err}"
+        expect(out).to include("OK: #{valid_temp}")
+
+        out, err, status = Open3.capture3(RbConfig.ruby, "-I", lib_dir, zfsmgr_bin, "config", "validate", invalid_file)
+        expect(status.exitstatus).to eq(1)
+        expect(err).to include("INVALID: #{invalid_file}")
+
+        out, err, status = Open3.capture3(
+          RbConfig.ruby, "-I", lib_dir, zfsmgr_bin,
+          "config", "validate", "--quiet", "--loglevel", "none", valid_temp
+        )
+        expect(status.exitstatus).to eq(0)
+        expect(out).to eq("")
+        expect(err).to eq("")
+
+        out, err, status = Open3.capture3(
+          RbConfig.ruby, "-I", lib_dir, zfsmgr_bin,
+          "config", "validate", "--quiet", "--loglevel", "none", invalid_file
+        )
+        expect(status.exitstatus).to eq(1)
+        expect(out).to eq("")
+        expect(err).to eq("")
+
+        # --all with invalid file fails; after removing invalid file, --all passes
+        out, err, status = Open3.capture3(
+          RbConfig.ruby, "-I", lib_dir, zfsmgr_bin,
+          "config", "validate", "--all", "--quiet", "--loglevel", "none", "--config-dir", dir
+        )
+        expect(status.exitstatus).to eq(1)
+        expect(out).to eq("")
+        expect(err).to eq("")
+
+        File.delete(invalid_file)
+        File.write(File.join(dir, "10-valid.toml"), "mbuffer = false\n")
+
+        out, err, status = Open3.capture3(
+          RbConfig.ruby, "-I", lib_dir, zfsmgr_bin,
+          "config", "validate", "--all", "--config-dir", dir
+        )
+        expect(status.exitstatus).to eq(0), "stderr: #{err}"
+        expect(out).to include("OK: #{File.join(dir, '10-valid.toml')}")
+
+        # No files and no --all fails
+        _out, _err, status = Open3.capture3(RbConfig.ruby, "-I", lib_dir, zfsmgr_bin, "config", "validate")
+        expect(status.exitstatus).to eq(1)
+      end
+    end
+  end
 end

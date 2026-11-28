@@ -300,6 +300,9 @@ module ZfsMgmt
         rescue Tomlrb::ParseError => e
           $logger&.error("failed to parse config file #{path}: #{e.message}")
           raise ConfigError, "failed to parse config file #{path}: #{e.message}"
+        rescue SystemCallError => e
+          $logger&.error("failed to read config file #{path}: #{e.message}")
+          raise ConfigError, "failed to read config file #{path}: #{e.message}"
         end
 
         next if parsed.nil?
@@ -325,6 +328,13 @@ module ZfsMgmt
 
       files = Dir.glob(File.join(dir, '*.toml')).sort
       load_files(files)
+    end
+
+    def self.validate_file(path)
+      load_files([path])
+      { path: path, valid: true, error: nil }
+    rescue ConfigError => e
+      { path: path, valid: false, error: e.message }
     end
 
     private
