@@ -48,6 +48,22 @@ class ZfsMgr < Thor
   desc "recv SUBCOMMAND ...ARGS", "receive zfs"
   subcommand "recv", ZfsMgmt::ZfsMgr::Recv
 
+  desc "schema", "print the config JSON schema (or its installed file path with --path)"
+  method_option :path, :type => :boolean, :default => false,
+                :desc => "print the path to the bundled config.schema.json file"
+  def schema
+    if options[:path]
+      puts ZfsMgmt::Config.schema_path
+    else
+      path = ZfsMgmt::Config.schema_path
+      if File.exist?(path)
+        puts File.read(path)
+      else
+        puts JSON.pretty_generate(ZfsMgmt::Config.config_json_schema)
+      end
+    end
+  end
+
   map '--version' => :version
   desc "version", "print zfs_mgmt version"
   def version

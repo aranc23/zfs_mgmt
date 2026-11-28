@@ -13,7 +13,20 @@ Currently zfs_mgmt is only useful for it's zfsmgr binary, although
 eventually the library might be useful for writing other applications
 around managing zfs.
 
-Therefore, building the gem and installing, or running ruby inside the src/ directory would be most useful:
+Build and install the gem into Ruby's default `bindir` (often `/usr/local/bin`):
+
+    $ bundle exec rake install
+
+To install `zfsmgr` into `/usr/bin/zfsmgr` with an optional compatibility symlink in `/usr/local/bin/zfsmgr` (when `/usr/local/bin` exists):
+
+    $ sudo gem install --no-document --bindir /usr/bin zfs_mgmt
+    $ [ -d /usr/local/bin ] && sudo ln -sf /usr/bin/zfsmgr /usr/local/bin/zfsmgr
+
+Or using the Rake task (configurable via `BINDIR` and `COMPAT_BINDIR`):
+
+    $ sudo bundle exec rake install:system
+
+Or run directly from the `src/` directory:
 
     $ ruby -I lib bin/zfsmgr
 
@@ -31,8 +44,10 @@ without the --noop option to actually remove snapshots.
       zfsmgr list SUBCOMMAND ...ARGS      # list filesystems
       zfsmgr recv SUBCOMMAND ...ARGS      # receive zfs
       zfsmgr restic SUBCOMMAND ...ARGS    # backup zfs to restic
+      zfsmgr schema                       # print the config JSON schema (or its installed file path with --path)
       zfsmgr send SUBCOMMAND ...ARGS      # send zfs
       zfsmgr snapshot SUBCOMMAND ...ARGS  # manage snapshots
+      zfsmgr version                      # print zfs_mgmt version
       zfsmgr zfsget [ZFS]                 # execute zfs get for the given properties and types and parse the output into a nested hash
 
 ### list stale
@@ -193,6 +208,12 @@ Unlike scalar options (where a higher-precedence source replaces lower ones), `e
 - A higher-precedence layer can re-add an option that was knocked out at an intermediate layer.
 
 See [examples/config.toml](examples/config.toml) for a full example and [schema/config.schema.json](schema/config.schema.json) for the JSON Schema (used by TOML editors/validators via the `#:schema` directive; regenerate with `bundle exec rake schema`).
+
+The schema file is also bundled inside the `zfs_mgmt` gem so tools like `taplo` can reference it locally:
+
+    $ zfsmgr schema --path
+    $ taplo check --schema "$(zfsmgr schema --path)" /etc/zfsmgr/*.toml
+    $ zfsmgr schema > config.schema.json
 
 ## zfs user properties
 

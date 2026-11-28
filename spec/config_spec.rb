@@ -702,9 +702,26 @@ RSpec.describe ZfsMgmt::Config do
     it "matches the committed schema/config.schema.json file" do
       schema_path = File.expand_path("../schema/config.schema.json", __dir__)
       expect(File).to exist(schema_path)
+      expect(described_class.schema_path).to eq(schema_path)
 
       parsed = JSON.parse(File.read(schema_path))
       expect(parsed).to eq(described_class.config_json_schema)
+    end
+
+    it "exposes the bundled schema via zfsmgr schema and zfsmgr schema --path" do
+      require "open3"
+      require "rbconfig"
+
+      lib_dir = File.expand_path("../lib", __dir__)
+      zfsmgr_bin = File.expand_path("../bin/zfsmgr", __dir__)
+
+      path_out, path_err, path_status = Open3.capture3(RbConfig.ruby, "-I", lib_dir, zfsmgr_bin, "schema", "--path")
+      expect(path_status.success?).to eq(true), "stderr: #{path_err}"
+      expect(path_out.strip).to eq(described_class.schema_path)
+
+      schema_out, schema_err, schema_status = Open3.capture3(RbConfig.ruby, "-I", lib_dir, zfsmgr_bin, "schema")
+      expect(schema_status.success?).to eq(true), "stderr: #{schema_err}"
+      expect(JSON.parse(schema_out)).to eq(described_class.config_json_schema)
     end
 
     it "generates the schema via the rake schema:generate task" do
