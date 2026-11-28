@@ -235,6 +235,10 @@ module ZfsMgmt
       new(hash || {})
     end
 
+    def self.schema_path
+      File.expand_path('../../schema/config.schema.json', __dir__)
+    end
+
     def self.config_json_schema
       base = JSON.parse(JSON.generate(json_schema))
       schema = {
