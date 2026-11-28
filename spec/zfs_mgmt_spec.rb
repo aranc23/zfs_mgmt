@@ -1063,6 +1063,43 @@ RSpec.describe ZfsMgmt do
     end
   end
 
+  describe ".zfs_list_datasets" do
+    before do
+      ZfsMgmt.global_options = { zfs_binary: "zfs" }
+    end
+
+    it "parses tab-delimited name and type recursively with optional ssh command_prefix" do
+      stdout = "tank/prod\tfilesystem\ntank/prod/data\tfilesystem\ntank/prod/zvol\tvolume\n"
+      status = instance_double(Process::Status, signaled?: false, success?: true)
+
+      expect(Open3).to receive(:capture3)
+        .with("ssh -o BatchMode=yes srchost zfs list -H -o name,type -t filesystem,volume -r tank/prod")
+        .and_return([stdout, "", status])
+
+      res = ZfsMgmt.zfs_list_datasets(
+        zfs: "tank/prod",
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "srchost"]
+      )
+      expect(res).to eq({
+        "tank/prod" => "filesystem",
+        "tank/prod/data" => "filesystem",
+        "tank/prod/zvol" => "volume"
+      })
+    end
+
+    it "raises ZfsDatasetNotFoundError and ZfsGetError appropriately" do
+      missing = instance_double(Process::Status, signaled?: false, success?: false, exitstatus: 1)
+      expect(Open3).to receive(:capture3).and_return(["", "cannot open 'tank/missing': dataset does not exist\n", missing])
+      expect { ZfsMgmt.zfs_list_datasets(zfs: "tank/missing") }.to raise_error(ZfsMgmt::ZfsDatasetNotFoundError)
+
+      failed = instance_double(Process::Status, signaled?: false, success?: false, exitstatus: 255)
+      expect(Open3).to receive(:capture3).and_return(["", "ssh: connect failed\n", failed])
+      expect($logger).to receive(:error).with(/failed to execute.*exit status 255/)
+      expect($logger).to receive(:error).with("stderr: ssh: connect failed")
+      expect { ZfsMgmt.zfs_list_datasets(zfs: "tank/prod") }.to raise_error(ZfsMgmt::ZfsGetError)
+    end
+  end
+
   describe ".zfs_managed_list" do
     it "filters filesystems by regex and property_match and returns Zfs instances without eagerly fetching snapshots" do
       allow(ZfsMgmt).to receive(:zfsget).with(properties: ["all"]).and_return({
@@ -2519,34 +2556,188 @@ RSpec.describe ZfsMgmt do
   end
 
   describe ".zfs_recv_all" do
-    it "skips received filesystems, non-local replicated descendants, and datasets without source, and processes config-only datasets" do
-      received = ZfsMgmt::Zfs.from_zfs_props("backup/received", {
-        "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "received",
-        "zfsmgmt:source" => "tank/p", "zfsmgmt:source@source" => "received"
-      })
-      rep_child = ZfsMgmt::Zfs.from_zfs_props("backup/rep_child", {
-        "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "inherited from backup",
-        "zfsmgmt:send_replicate" => "true", "zfsmgmt:send_replicate@source" => "inherited from backup",
-        "zfsmgmt:source" => "tank/p", "zfsmgmt:source@source" => "inherited from backup"
-      })
-      nosrc = ZfsMgmt::Zfs.from_zfs_props("backup/nosrc", {
-        "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "local"
-      })
-      valid = ZfsMgmt::Zfs.from_zfs_props("backup/valid", {
-        "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "local",
-        "zfsmgmt:source" => "srchost:tank/p", "zfsmgmt:source@source" => "local"
-      })
+    before do
+      ZfsMgmt.global_options = { zfs_binary: "zfs", mbuffer_binary: "mbuffer" }
+    end
 
-      expect(ZfsMgmt).to receive(:zfs_managed_list).with(
-        filter: ".+",
-        property_match: { recv_enabled: true },
-        include_config_only: true
-      ).and_return([received, rep_child, nosrc, valid])
+    it "enumerates source descendants via zfs_list_datasets for recv=true, discovers missing local children and volumes, and deduplicates existing descendants" do
+      local_datasets = {
+        "backup/received" => {
+          "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "received",
+          "zfsmgmt:source" => "tank/p", "zfsmgmt:source@source" => "received"
+        },
+        "backup/rep_child" => {
+          "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "inherited from backup",
+          "zfsmgmt:send_replicate" => "true", "zfsmgmt:send_replicate@source" => "inherited from backup",
+          "zfsmgmt:source" => "tank/p", "zfsmgmt:source@source" => "inherited from backup"
+        },
+        "backup/nosrc" => {
+          "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "local"
+        },
+        "backup/valid" => {
+          "type" => "filesystem",
+          "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "local",
+          "zfsmgmt:source" => "srchost:tank/p", "zfsmgmt:source@source" => "local"
+        },
+        "backup/valid/existing" => {
+          "type" => "filesystem",
+          "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "inherited from backup/valid",
+          "zfsmgmt:source" => "srchost:tank/p", "zfsmgmt:source@source" => "inherited from backup/valid"
+        }
+      }
 
+      expect(ZfsMgmt).to receive(:zfsget).with(properties: ["all"]).and_return(local_datasets)
       expect($logger).to receive(:error).with("backup/nosrc: you must specify a source zfs path via the user property zfsmgmt:source, skipping")
-      expect(ZfsMgmt).to receive(:zfs_recv).once.with({ filter: ".+" }, valid)
+
+      expect(ZfsMgmt).to receive(:zfs_list_datasets).once.with(
+        zfs: "tank/p/valid",
+        types: ["filesystem", "volume"],
+        recursive: true,
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "srchost"]
+      ).and_return({
+        "tank/p/valid" => "filesystem",
+        "tank/p/valid/existing" => "filesystem",
+        "tank/p/valid/newchild" => "filesystem",
+        "tank/p/valid/newzvol" => "volume"
+      })
+
+      received_targets = []
+      expect(ZfsMgmt).to receive(:zfs_recv).exactly(4).times do |_opts, zfs_obj|
+        received_targets << [zfs_obj.name, zfs_obj.source, zfs_obj.type]
+      end
 
       ZfsMgmt.zfs_recv_all({ filter: ".+" })
+
+      expect(received_targets).to eq([
+        ["backup/valid", "srchost:tank/p/valid", "filesystem"],
+        ["backup/valid/existing", "srchost:tank/p/valid/existing", "filesystem"],
+        ["backup/valid/newchild", "srchost:tank/p/valid/newchild", "filesystem"],
+        ["backup/valid/newzvol", "srchost:tank/p/valid/newzvol", "volume"]
+      ])
+    end
+
+    it "discovers descendants from config-only roots and respects recv=false opt-outs in ZFS props and TOML config" do
+      ZfsMgmt.config = ZfsMgmt::Config.from_hash(
+        "zfs" => {
+          "backup/prod" => {
+            "recv" => true,
+            "source" => "srchost:tank"
+          },
+          "backup/prod/excluded_cfg" => {
+            "recv" => false
+          }
+        }
+      )
+
+      local_datasets = {
+        "backup/zfsroot" => {
+          "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "local",
+          "zfsmgmt:source" => "srchost:ztank", "zfsmgmt:source@source" => "local"
+        },
+        "backup/zfsroot/excluded_zfs" => {
+          "zfsmgmt:recv" => "false", "zfsmgmt:recv@source" => "local",
+          "zfsmgmt:source" => "srchost:ztank", "zfsmgmt:source@source" => "inherited from backup/zfsroot"
+        }
+      }
+      expect(ZfsMgmt).to receive(:zfsget).with(properties: ["all"]).and_return(local_datasets)
+
+      expect(ZfsMgmt).to receive(:zfs_list_datasets).once.with(
+        zfs: "tank/prod",
+        types: ["filesystem", "volume"],
+        recursive: true,
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "srchost"]
+      ).and_return({
+        "tank/prod" => "filesystem",
+        "tank/prod/data" => "filesystem",
+        "tank/prod/excluded_cfg" => "filesystem",
+        "tank/prod/excluded_cfg/grand" => "filesystem"
+      })
+
+      expect(ZfsMgmt).to receive(:zfs_list_datasets).once.with(
+        zfs: "ztank/zfsroot",
+        types: ["filesystem", "volume"],
+        recursive: true,
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "srchost"]
+      ).and_return({
+        "ztank/zfsroot" => "filesystem",
+        "ztank/zfsroot/data" => "filesystem",
+        "ztank/zfsroot/excluded_zfs" => "filesystem",
+        "ztank/zfsroot/excluded_zfs/grand" => "filesystem"
+      })
+
+      received_names = []
+      expect(ZfsMgmt).to receive(:zfs_recv).exactly(4).times do |_opts, zfs_obj|
+        received_names << [zfs_obj.name, zfs_obj.source]
+      end
+
+      ZfsMgmt.zfs_recv_all({ filter: ".+" })
+      expect(received_names).to eq([
+        ["backup/prod", "srchost:tank/prod"],
+        ["backup/prod/data", "srchost:tank/prod/data"],
+        ["backup/zfsroot", "srchost:ztank/zfsroot"],
+        ["backup/zfsroot/data", "srchost:ztank/zfsroot/data"]
+      ])
+    end
+
+    it "does not enumerate descendants for recv=local, send_replicate=true, or CLI --replicate, and handles listing errors" do
+      local_datasets = {
+        "backup/local_only" => {
+          "zfsmgmt:recv" => "local", "zfsmgmt:recv@source" => "local",
+          "zfsmgmt:source" => "tank/local_only", "zfsmgmt:source@source" => "local"
+        },
+        "backup/rep" => {
+          "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "local",
+          "zfsmgmt:send_replicate" => "true", "zfsmgmt:send_replicate@source" => "local",
+          "zfsmgmt:source" => "tank/rep", "zfsmgmt:source@source" => "local"
+        },
+        "backup/err" => {
+          "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "local",
+          "zfsmgmt:source" => "downhost:tank/err", "zfsmgmt:source@source" => "local"
+        },
+        "backup/override" => {
+          "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "local",
+          "zfsmgmt:source" => "tank/parent", "zfsmgmt:source@source" => "local"
+        },
+        "backup/override/sub" => {
+          "zfsmgmt:recv" => "true", "zfsmgmt:recv@source" => "inherited from backup/override",
+          "zfsmgmt:source" => "otherhost:other", "zfsmgmt:source@source" => "local"
+        }
+      }
+
+      expect(ZfsMgmt).to receive(:zfsget).with(properties: ["all"]).and_return(local_datasets)
+
+      expect(ZfsMgmt).to receive(:zfs_list_datasets).with(
+        zfs: "tank/err/err", types: ["filesystem", "volume"], recursive: true,
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "downhost"]
+      ).and_raise(ZfsMgmt::ZfsGetError.new("ssh failed"))
+      expect($logger).to receive(:error).with("unable to list source datasets for tank/err/err")
+
+      expect(ZfsMgmt).to receive(:zfs_list_datasets).with(
+        zfs: "tank/parent/override", types: ["filesystem", "volume"], recursive: true, command_prefix: []
+      ).and_return({
+        "tank/parent/override" => "filesystem",
+        "tank/parent/override/sub" => "filesystem"
+      })
+
+      expect(ZfsMgmt).to receive(:zfs_list_datasets).with(
+        zfs: "otherhost:other/sub".split(":", 2).last, types: ["filesystem", "volume"], recursive: true,
+        command_prefix: ["ssh", "-o", "BatchMode=yes", "otherhost"]
+      ).and_return({
+        "other/sub" => "filesystem"
+      })
+
+      received = []
+      expect(ZfsMgmt).to receive(:zfs_recv).exactly(4).times do |_opts, zfs_obj|
+        received << [zfs_obj.name, zfs_obj.source]
+      end
+
+      ZfsMgmt.zfs_recv_all({ filter: ".+" })
+      expect(received).to eq([
+        ["backup/local_only", "tank/local_only/local_only"],
+        ["backup/override", "tank/parent/override"],
+        ["backup/rep", "tank/rep/rep"],
+        ["backup/override/sub", "otherhost:other/sub"]
+      ])
     end
   end
 

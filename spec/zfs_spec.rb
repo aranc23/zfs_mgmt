@@ -432,6 +432,9 @@ RSpec.describe ZfsMgmt::Zfs do
           "zfsmgmt:recv@source" => "local"
         })
         expect(local_only.recv_enabled).to eq(true)
+        expect(local_only.recv_local_only?).to eq(true)
+        expect(local_recv.recv_local_only?).to eq(false)
+        expect(inherited_recv.recv_local_only?).to eq(false)
 
         inherited_local = described_class.from_zfs_props("backup/fs/child", {
           "zfsmgmt:recv" => "local",
@@ -484,6 +487,30 @@ RSpec.describe ZfsMgmt::Zfs do
         })
         expect(received_src.source).to be_nil
         expect(received_src.base_source).to be_nil
+      end
+
+      it "builds inherited_zfs_props rewriting local sources to inherited from dataset" do
+        parent = described_class.from_zfs_props("backup/prod", {
+          "type" => "filesystem",
+          "zfsmgmt:recv" => "true",
+          "zfsmgmt:recv@source" => "local",
+          "zfsmgmt:source" => "srchost:tank",
+          "zfsmgmt:source@source" => "local",
+          "zfsmgmt:policy" => "7d",
+          "zfsmgmt:policy@source" => "inherited from backup",
+          "zfsmgmt:send" => "true",
+          "zfsmgmt:send@source" => "received"
+        })
+        expect(parent.inherited_zfs_props).to eq({
+          "zfsmgmt:recv" => "true",
+          "zfsmgmt:recv@source" => "inherited from backup/prod",
+          "zfsmgmt:source" => "srchost:tank",
+          "zfsmgmt:source@source" => "inherited from backup/prod",
+          "zfsmgmt:policy" => "7d",
+          "zfsmgmt:policy@source" => "inherited from backup",
+          "zfsmgmt:send" => "true",
+          "zfsmgmt:send@source" => "received"
+        })
       end
     end
 

@@ -189,6 +189,8 @@ module ZfsMgmt
       @source_base = attrs.delete(:source_base) if attrs.key?(:source_base)
       source_explicit_remote_provided = attrs.key?(:source_explicit_remote)
       @source_explicit_remote = attrs.delete(:source_explicit_remote) if source_explicit_remote_provided
+      @recv_local_only = attrs.key?(:recv_local_only) ? !!attrs.delete(:recv_local_only) : false
+      @raw_zfs_props = attrs.delete(:raw_zfs_props) if attrs.key?(:raw_zfs_props)
       @config_merged = attrs.key?(:config_merged) ? !!attrs.delete(:config_merged) : false
       if attrs.key?(:send) && !attrs.key?(:send_enabled)
         attrs[:send_enabled] = attrs.delete(:send)
@@ -286,6 +288,14 @@ module ZfsMgmt
 
     def recv?
       recv_enabled == true
+    end
+
+    def recv_local_only?
+      @recv_local_only == true
+    end
+
+    def inherited_zfs_props
+      ZfsMgmt.extract_inherited_props(name, @raw_zfs_props)
     end
 
     def volume?
@@ -417,7 +427,7 @@ module ZfsMgmt
       end
     end
 
-    def self.from_zfs_props(name, props = {}, config_merged: false)
+    def self.from_zfs_props(name, props = {}, config_merged: false, raw_zfs_props: nil)
       props ||= {}
       warn_unknown_zfs_props(name, props)
       attrs = { name: name, config_merged: config_merged }
@@ -510,6 +520,8 @@ module ZfsMgmt
         else
           false
         end
+      attrs[:recv_local_only] = (recv_val == 'local' && recv_src == 'local' && attrs[:recv_enabled])
+      attrs[:raw_zfs_props] = (raw_zfs_props.nil? ? (config_merged ? {} : props.dup) : raw_zfs_props.dup)
 
       # Interpret zfsmgmt:source taking @source into account
       if props.key?('zfsmgmt:source')

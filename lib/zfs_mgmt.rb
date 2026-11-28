@@ -428,11 +428,9 @@ module ZfsMgmt
     end
   end
 
-  def self.zfsget(properties: ['all'],types: ['filesystem','volume'],zfs: '', command_prefix: [])
-    results={}
-    com = [ZfsMgmt.global_options[:zfs_binary], 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
-    $logger.debug((command_prefix+com).join(' '))
-    so,se,status = Open3.capture3((command_prefix+com).join(' '))
+  def self.run_zfs_read_command(com, zfs:, command_prefix: [])
+    $logger.debug((command_prefix + com).join(' '))
+    so, se, status = Open3.capture3((command_prefix + com).join(' '))
     if status.signaled?
       $logger.error("process was signalled \"#{com.join(' ')}\", termsig #{status.termsig}")
       raise ZfsGetError, "process was signalled \"#{com.join(' ')}\", termsig #{status.termsig}"
@@ -449,6 +447,13 @@ module ZfsMgmt
       se.split("\n").each { |l| $logger.error("stderr: #{l}") }
       raise ZfsGetError, "failed to execute \"#{com.join(' ')}\", exit status #{status.exitstatus}"
     end
+    so
+  end
+
+  def self.zfsget(properties: ['all'],types: ['filesystem','volume'],zfs: '', command_prefix: [])
+    results={}
+    com = [ZfsMgmt.global_options[:zfs_binary], 'get', '-Hp', properties.join(','), '-t', types.join(','), zfs]
+    so = run_zfs_read_command(com, zfs: zfs, command_prefix: command_prefix)
     so.split("\n").each do |line|
       params = line.split("\t")
       unless results.has_key?(params[0])
@@ -466,6 +471,49 @@ module ZfsMgmt
       end
     end
     return results
+  end
+
+  def self.zfs_list_datasets(zfs:, types: ['filesystem', 'volume'], recursive: true, command_prefix: [])
+    results = {}
+    com = [ZfsMgmt.global_options[:zfs_binary], 'list', '-H', '-o', 'name,type', '-t', types.join(',')]
+    com.push('-r') if recursive
+    com.push(zfs)
+    so = run_zfs_read_command(com, zfs: zfs, command_prefix: command_prefix)
+    so.split("\n").each do |line|
+      next if line.strip.empty?
+
+      name, type = line.split("\t", 2)
+      results[name] = type if name && !name.empty?
+    end
+    results
+  end
+
+  def self.extract_inherited_props(source_name, raw_props)
+    inherited = {}
+    return inherited unless raw_props.is_a?(Hash)
+
+    raw_props.each do |k, v|
+      k_str = k.to_s
+      next unless k_str.start_with?('zfsmgmt:')
+      next if k_str.end_with?('@source')
+
+      inherited[k_str] = v.respond_to?(:dup) ? v.dup : v
+      src_key = "#{k_str}@source"
+      src_val = raw_props[src_key]
+      inherited[src_key] = (src_val == 'local' || src_val.nil?) ? "inherited from #{source_name}" : src_val
+    end
+    inherited
+  end
+
+  def self.inherited_local_props_for(dataset_name, local_datasets, fallback_zfs = nil)
+    parts = dataset_name.to_s.split('/')
+    (parts.length - 1).downto(1) do |len|
+      ancestor = parts[0...len].join('/')
+      next unless local_datasets && local_datasets.key?(ancestor)
+
+      return extract_inherited_props(ancestor, local_datasets[ancestor])
+    end
+    fallback_zfs ? fallback_zfs.inherited_zfs_props : {}
   end
   def self.local_epoch_to_datetime(e)
     return Time.at(e).to_datetime
@@ -585,15 +633,16 @@ module ZfsMgmt
     true
   end
 
-  def self.zfs_managed_list(filter: '.+', properties: ['all'], property_match: { manage: true }, include_config_only: false)
+  def self.zfs_managed_list(filter: '.+', properties: ['all'], property_match: { manage: true }, include_config_only: false, local_datasets: nil)
     zfss = []
     seen = {}
-    zfsget(properties: properties).each do |zfs_name, props|
+    datasets = local_datasets.nil? ? zfsget(properties: properties) : local_datasets
+    datasets.each do |zfs_name, props|
       seen[zfs_name] = true
       next unless match_filter?(zfs_name, filter)
 
       merged_props = merge_config_props(zfs_name, props)
-      zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, merged_props, config_merged: !config.nil?)
+      zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, merged_props, config_merged: !config.nil?, raw_zfs_props: props)
       next unless dataset_matches_property_match?(zfs, merged_props, property_match)
 
       zfss.push(zfs)
@@ -604,7 +653,7 @@ module ZfsMgmt
         next unless match_filter?(zfs_name, filter)
 
         merged_props = merge_config_props(zfs_name, {})
-        zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, merged_props, config_merged: true)
+        zfs = ZfsMgmt::Zfs.from_zfs_props(zfs_name, merged_props, config_merged: true, raw_zfs_props: {})
         next unless dataset_matches_property_match?(zfs, merged_props, property_match)
 
         zfss.push(zfs)
@@ -1307,18 +1356,80 @@ module ZfsMgmt
     end
   end
   def self.zfs_recv_all(options)
-    zfs_managed_list(filter: options[:filter],
-                     property_match: { recv_enabled: true },
-                     include_config_only: true).each do |zfs|
+    filter = options[:filter] || '.+'
+    all_local = zfsget(properties: ['all'])
+    candidates = zfs_managed_list(filter: filter,
+                                  property_match: { recv_enabled: true },
+                                  include_config_only: true,
+                                  local_datasets: all_local)
+    processed_local = {}
+
+    candidates.sort_by { |z| [z.name.count('/'), z.name] }.each do |zfs|
       unless zfs.recv_enabled
         $logger.debug("skipping filesystem with recv disabled: #{zfs.name}")
         next
       end
+      next if processed_local[zfs.name]
+
       if zfs.source.nil? || zfs.source.to_s.empty?
         $logger.error("#{zfs.name}: you must specify a source zfs path via the user property zfsmgmt:source, skipping")
         next
       end
-      zfs_recv(options, zfs)
+
+      source_remote, source_path = parse_destination(zfs.source)
+      if source_path.nil? || source_path.empty?
+        $logger.error("#{zfs.name}: you must specify a source zfs path via the user property zfsmgmt:source, skipping")
+        next
+      end
+
+      enumerate_descendants = !zfs.recv_local_only? && !zfs.send_replicate && !key_comp?(options, 'replicate', true)
+      unless enumerate_descendants
+        processed_local[zfs.name] = true
+        zfs_recv(options, zfs)
+        next
+      end
+
+      send_prefix = source_remote ? ssh_command_prefix(source_remote, resolve_ssh_config(zfs)) : []
+      begin
+        remote_datasets = zfs_list_datasets(zfs: source_path,
+                                            types: ['filesystem', 'volume'],
+                                            recursive: true,
+                                            command_prefix: send_prefix)
+      rescue ZfsGetError
+        $logger.error("unable to list source datasets for #{source_path}")
+        next
+      end
+
+      remote_datasets.each do |remote_ds, remote_type|
+        if remote_ds == source_path
+          child_local = zfs.name
+          child_zfs = zfs
+          child_zfs.type = remote_type if child_zfs.type.nil? && %w[filesystem volume].include?(remote_type)
+        elsif remote_ds.start_with?("#{source_path}/")
+          rel = remote_ds.delete_prefix("#{source_path}/")
+          child_local = "#{zfs.name}/#{rel}"
+          if all_local.key?(child_local)
+            raw = all_local[child_local].dup
+            raw['type'] ||= remote_type if %w[filesystem volume].include?(remote_type)
+            child_zfs = build_zfs_from_props(child_local, raw)
+          else
+            raw = inherited_local_props_for(child_local, all_local, zfs)
+            raw['type'] = remote_type if %w[filesystem volume].include?(remote_type)
+            child_zfs = build_zfs_from_props(child_local, raw)
+          end
+        else
+          next
+        end
+
+        next unless match_filter?(child_local, filter)
+        next unless child_zfs.recv_enabled
+        expected_source = format_destination(source_remote, remote_ds)
+        next unless child_zfs.source == expected_source
+        next if processed_local[child_local]
+
+        processed_local[child_local] = true
+        zfs_recv(options, child_zfs)
+      end
     end
   end
   def self.lock(options)

@@ -324,8 +324,8 @@ Path resolution rules:
 
 ### zfsmgmt:recv
 Enable `zfs recv` (pulling snapshots from `zfsmgmt:source`) for this dataset via `zfsmgr recv all`. Accepts boolean values (`true`/`on`) or `'local'`:
-- `true` or `on`: enables `zfs recv` when the property's ZFS source is `local` or `inherited`, and disables it when the source is `received` or when `zfsmgmt:send_replicate` is inherited from an ancestor.
-- `local`: enables `zfs recv` only when the property's ZFS source is `local` (not inherited or received).
+- `true` or `on`: enables `zfs recv` when the property's ZFS source is `local` or `inherited`, and disables it when the source is `received` or when `zfsmgmt:send_replicate` is inherited from an ancestor. When neither `recv = "local"` nor `-R` (`send_replicate`) is active, `zfsmgr recv all` runs `zfs list -H -o name,type -t filesystem,volume -r <source>` on the source side to discover and receive descendant filesystems and volumes automatically—even before they exist locally—while honoring per-dataset `recv = false` opt-outs and overrides from local ZFS properties or TOML config.
+- `local`: enables `zfs recv` only when the property's ZFS source is `local` (not inherited or received), and receives only that dataset without enumerating source descendants.
 
 `zfsmgr recv all` runs `zfs send` on the source side (over SSH using `ssh_config` when `zfsmgmt:source` specifies `[user@]host:`) and `zfs recv` on the local dataset. Transfer results are recorded in the shared send/recv state database keyed by `(source, destination)` with `operation = "recv"`, visible in `zfsmgr recv state` / `zfsmgr send state` (`zfsmgr recv state --check` emits `zfs_recv` status lines).
 
